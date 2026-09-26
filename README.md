@@ -1,22 +1,24 @@
 # B.R. Ambedkar Museum — Voice Tour Guide
 
-A voice-only tour-guide web app for a handheld museum device. Ask questions
-about Dr. B.R. Ambedkar's life, speeches, and legacy using your voice.
+A voice-guided tour app for the Dr. B.R. Ambedkar National Memorial kiosk. Visitors can ask questions by voice and browse source-backed exhibit records.
 
 ## Architecture
 
 ```
 frontend/          Vanilla HTML / CSS / JS
   index.html       Single-page app
-  style.css        Design system (navy/gold, glassmorphism)
-  app.js           Mic capture, Web Audio orb, artifact cards
+  style.css        Museum visual system, kiosk layout, and scrolling
+  app.js           Mic capture, Web Audio orb, and content cards
 
 backend/           Python FastAPI
   main.py          /converse endpoint (Whisper → LLM → Orpheus TTS)
-  seed_chroma.py   Populate ChromaDB with museum content
+  artifacts.py     Artifact IDs, Markdown context, and structured related data
+  seed_chroma.py   Seed existing and Markdown-derived content into ChromaDB
   requirements.txt Python dependencies
   .env.example     API key template
 ```
+
+Exhibit Markdown remains the source of truth for QR exhibit context. Add optional JSON under `### Related content for UI (speeches, locations, books)` using the `related_speeches`, `related_locations`, and `related_books` arrays. `seed_chroma.py` keeps the existing corpus and adds searchable Markdown chunks tagged with the stable `artifact_id`; the backend parses related card data separately and returns it directly to the UI.
 
 ## Quick Start
 
@@ -47,7 +49,9 @@ Navigate to **http://localhost:8000** — the backend serves the frontend.
 - **Tap again** to stop — your question is sent to the server
 - The orb pulses with your mic amplitude (green) and with the guide's
   voice (blue) during playback
-- Artifact cards (photos, articles) slide in below the transcript
+- Photo, speech, location, and book cards appear below the transcript when source data exists
+- Long exhibit content scrolls normally with touch or stylus; mouse drags on non-interactive areas scroll during development
+- Tap a photo preview to open its complete image in the full-screen viewer
 
 ## API
 
@@ -68,7 +72,10 @@ Navigate to **http://localhost:8000** — the backend serves the frontend.
       "url": "/static/exhibits/young_ambedkar.jpg",
       "caption": "Photograph: Young Bhimrao at age 10…"
     }
-  ]
+  ],
+  "related_speeches": [],
+  "related_locations": [],
+  "related_books": []
 }
 ```
 

@@ -22,6 +22,9 @@
   const artifactsGrid   = document.getElementById('artifacts-grid');
   const audioPlayer     = document.getElementById('audio-player');
   const chipButtons     = document.querySelectorAll('.chip');
+  const imageViewer     = document.getElementById('image-viewer');
+  const imageViewerImage = document.getElementById('image-viewer-image');
+  const closeImageViewerButton = document.getElementById('close-image-viewer');
 
   /* ===== Config ===== */
   const API_BASE = window.location.origin;
@@ -31,6 +34,9 @@
   let mediaRecorder = null;
   let audioChunks = [];
   let micStream = null;
+  let imageViewerOpen = false;
+  let imageViewerScrollTop = 0;
+  let imageViewerReturnFocus = null;
 
   /* ===== Web Audio API ===== */
   let audioCtx = null;
@@ -296,7 +302,7 @@
     }
 
     // 3. Render artifacts with staggered slide-in
-    renderArtifacts(data.artifacts || []);
+    renderArtifacts(data.artifacts || [], data);
 
     // 4. Play audio and pulse orb to the guide's voice
     if (data.audio_url) {
@@ -349,16 +355,22 @@
   }
 
   /* ===== Staggered Artifact Cards Rendering ===== */
-  function renderArtifacts(artifacts) {
+  function renderArtifacts(artifacts, related = {}) {
     artifactsGrid.innerHTML = '';
-    if (!artifacts || artifacts.length === 0) {
+    const relatedItems = [
+      ...(Array.isArray(related.related_speeches) ? related.related_speeches.map(item => ({ ...item, type: 'speech' })) : []),
+      ...(Array.isArray(related.related_locations) ? related.related_locations.map(item => ({ ...item, type: 'location' })) : []),
+      ...(Array.isArray(related.related_books) ? related.related_books.map(item => ({ ...item, type: 'book' })) : []),
+    ];
+    const allArtifacts = [...(artifacts || []), ...relatedItems];
+    if (allArtifacts.length === 0) {
       if (artifactsArea) artifactsArea.classList.add('hidden');
       return;
     }
 
     if (artifactsArea) artifactsArea.classList.remove('hidden');
 
-    if (artifacts.length === 1) {
+    if (allArtifacts.length === 1) {
       artifactsGrid.classList.add('single-record');
     } else {
       artifactsGrid.classList.remove('single-record');
@@ -366,8 +378,8 @@
 
     if (artifactsBadge) {
       const badgeText = isCurrentHindi
-        ? (artifacts.length === 1 ? 'विशेष प्रदर्शनी' : `${artifacts.length} अभिलेख`)
-        : (artifacts.length === 1 ? 'Featured Exhibit' : `${artifacts.length} Records`);
+        ? (allArtifacts.length === 1 ? 'विशेष प्रदर्शनी' : `${allArtifacts.length} अभिलेख`)
+        : (allArtifacts.length === 1 ? 'Featured Exhibit' : `${allArtifacts.length} Records`);
       artifactsBadge.textContent = badgeText;
     }
 
@@ -376,13 +388,35 @@
       panelTitle.textContent = isCurrentHindi ? 'प्रदर्शनी अभिलेखागार' : 'Exhibition Archives';
     }
 
-    artifacts.forEach((artifact, index) => {
+    allArtifacts.forEach((artifact, index) => {
       const card = document.createElement('div');
       card.className = 'artifact-card';
       // Staggered slide-in animation delay
       card.style.animationDelay = (index * 130) + 'ms';
 
       const type = (artifact.type || 'photo').toLowerCase();
+      if (type === 'speech' || type === 'location' || type === 'book') {
+        const labels = { speech: 'Related Speech', location: 'Related Location', book: 'Related Book' };
+        let details = '';
+        if (type === 'speech') {
+          if (artifact.speaker) details += `<p class="related-meta">${escHtml(artifact.speaker)}</p>`;
+          if (artifact.date) details += `<p class="related-meta">${escHtml(artifact.date)}</p>`;
+          if (artifact.venue) details += `<p class="related-meta">${escHtml(artifact.venue)}</p>`;
+        } else if (type === 'location') {
+          if (artifact.city) details += `<p class="related-meta">${escHtml(artifact.city)}</p>`;
+        } else {
+          const publication = [artifact.author, artifact.year].filter(value => value !== undefined && value !== null && value !== '').join(' · ');
+          if (publication) details += `<p class="related-meta">${escHtml(publication)}</p>`;
+          if (artifact.publisher) details += `<p class="related-meta">${escHtml(artifact.publisher)}</p>`;
+        }
+        const description = artifact.summary || artifact.description || '';
+        const sourceUrl = safeExternalUrl(artifact.source_url);
+        card.classList.add('related-card', `related-${type}`);
+        card.innerHTML = `<div class="card-body"><span class="card-type type-${type}">${labels[type]}</span><h3 class="card-title">${escHtml(artifact.title || artifact.name || '')}</h3>${details}${description ? `<p class="card-caption">${escHtml(description)}</p>` : ''}${sourceUrl ? `<a class="card-action" href="${escHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">Read speech</a>` : ''}</div>`;
+        artifactsGrid.appendChild(card);
+        return;
+      }
+
       let html = '';
 
       if (artifact.url && (type === 'image' || type === 'photo')) {
@@ -402,6 +436,13 @@
 
       card.innerHTML = html;
 
+      const cardImage = card.querySelector('.card-image');
+      if (cardImage) {
+        cardImage.tabIndex = 0;
+        cardImage.setAttribute('role', 'button');
+        cardImage.setAttribute('aria-label', `View full image: ${artifact.title || 'Museum Exhibit'}`);
+      }
+
       if (artifact.url && type === 'article') {
         card.setAttribute('role', 'link');
         card.setAttribute('tabindex', '0');
@@ -413,6 +454,72 @@
 
       artifactsGrid.appendChild(card);
     });
+  }
+
+  function safeExternalUrl(value) {
+    if (!value) return '';
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function openImageViewer(image) {
+    imageViewerOpen = true;
+    imageViewerScrollTop = window.scrollY;
+    imageViewerReturnFocus = image;
+    imageViewerImage.src = image.currentSrc || image.src;
+    imageViewerImage.alt = image.alt || 'Exhibit image';
+    imageViewer.classList.remove('hidden');
+    imageViewer.setAttribute('aria-hidden', 'false');
+    document.documentElement.classList.add('viewer-open');
+    app.inert = true;
+    closeImageViewerButton.focus({ preventScroll: true });
+  }
+
+  function closeImageViewer() {
+    if (!imageViewerOpen) return;
+    imageViewerOpen = false;
+    imageViewer.classList.add('hidden');
+    imageViewer.setAttribute('aria-hidden', 'true');
+    imageViewerImage.removeAttribute('src');
+    imageViewerImage.alt = '';
+    document.documentElement.classList.remove('viewer-open');
+    app.inert = false;
+    window.scrollTo(0, imageViewerScrollTop);
+    if (imageViewerReturnFocus && imageViewerReturnFocus.isConnected) {
+      imageViewerReturnFocus.focus({ preventScroll: true });
+    }
+    imageViewerReturnFocus = null;
+  }
+
+  function setupMousePageScroll() {
+    let gesture = null;
+    app.addEventListener('pointerdown', (event) => {
+      if (imageViewerOpen || event.pointerType !== 'mouse' || event.button !== 0) return;
+      if (event.target.closest('button, input, textarea, select, a, [role="button"], [role="link"], [contenteditable="true"]')) return;
+      gesture = { pointerId: event.pointerId, startY: event.clientY, lastY: event.clientY, moved: false };
+      app.setPointerCapture(event.pointerId);
+    });
+    app.addEventListener('pointermove', (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      if (Math.abs(event.clientY - gesture.startY) > 3) {
+        gesture.moved = true;
+        app.classList.add('pointer-scrolling');
+      }
+      if (gesture.moved) window.scrollBy(0, gesture.lastY - event.clientY);
+      gesture.lastY = event.clientY;
+    });
+    function finishGesture(event) {
+      if (!gesture || (event && event.pointerId !== gesture.pointerId)) return;
+      gesture = null;
+      app.classList.remove('pointer-scrolling');
+    }
+    app.addEventListener('pointerup', finishGesture);
+    app.addEventListener('pointercancel', finishGesture);
+    app.addEventListener('lostpointercapture', finishGesture);
   }
 
   function escHtml(str) {
@@ -463,7 +570,31 @@
     });
   });
 
+  artifactsGrid.addEventListener('click', (event) => {
+    const image = event.target.closest?.('.card-image');
+    if (image) openImageViewer(image);
+  });
+
+  artifactsGrid.addEventListener('keydown', (event) => {
+    const image = event.target.closest?.('.card-image');
+    if (!image || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    openImageViewer(image);
+  });
+
+  closeImageViewerButton.addEventListener('click', closeImageViewer);
+  imageViewer.addEventListener('click', (event) => {
+    if (event.target === imageViewer) closeImageViewer();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (imageViewerOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeImageViewer();
+    }
+  });
+
   /* ===== Initial demo state ===== */
+  setupMousePageScroll();
   setState('idle');
 
 })();

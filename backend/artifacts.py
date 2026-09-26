@@ -6,6 +6,8 @@ Add new entries to ARTIFACT_REGISTRY to support additional QR artifacts.
 from __future__ import annotations
 
 import pathlib
+import json
+import re
 from typing import Any, Optional
 
 BASE_DIR = pathlib.Path(__file__).parent
@@ -89,6 +91,141 @@ def load_artifact_context(qr_id: str) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+RELATED_CONTENT_KEYS = ("related_speeches", "related_locations", "related_books")
+RELATED_CONTENT_HEADING = re.compile(
+    r"(?ims)^###\s+Related content for UI[^\n]*\n(.*?)(?=^#{1,3}\s|\Z)"
+)
+
+
+def _artifact_markdown(entry: dict[str, Any]) -> str:
+    return _read_md(_artifact_dir(entry) / entry["context_file"])
+
+
+def artifact_id(qr_id: str) -> Optional[str]:
+    entry = get_artifact(qr_id)
+    if not entry:
+        return None
+    match = re.search(r"(?m)^##\s+artifact_id:\s*(\S+)\s*$", _artifact_markdown(entry))
+    return match.group(1) if match else entry["id"]
+
+
+def related_content(qr_id: str) -> dict[str, list[dict[str, Any]]]:
+    """Read optional UI cards from the exhibit's fenced JSON section."""
+    empty = {key: [] for key in RELATED_CONTENT_KEYS}
+    entry = get_artifact(qr_id)
+    if not entry:
+        return empty
+
+    match = RELATED_CONTENT_HEADING.search(_artifact_markdown(entry))
+    if not match:
+        return empty
+
+    code = re.search(r"(?is)```(?:json)?\s*(.*?)\s*```", match.group(1))
+    if not code:
+        return empty
+    try:
+        data = json.loads(code.group(1))
+    except json.JSONDecodeError:
+        return empty
+    if not isinstance(data, dict):
+        return empty
+
+    stable_id = artifact_id(qr_id)
+    result = {}
+    for key in RELATED_CONTENT_KEYS:
+        entries = data.get(key)
+        result[key] = [
+            {**item, "artifact_id": stable_id}
+            for item in entries
+            if isinstance(item, dict)
+        ] if isinstance(entries, list) else []
+    return result
+
+
+def related_content_for_artifacts(artifact_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Combine source-backed UI content for the unique retrieved artifact IDs."""
+    combined = {key: [] for key in RELATED_CONTENT_KEYS}
+    seen: set[tuple[str, str]] = set()
+    for identifier in artifact_ids:
+        entry = get_artifact(identifier)
+        if not entry:
+            continue
+        for key, items in related_content(entry["id"]).items():
+            for item in items:
+                identity = (key, json.dumps(item, sort_keys=True, ensure_ascii=False))
+                if identity not in seen:
+                    seen.add(identity)
+                    combined[key].append(item)
+    return combined
+
+
+def artifact_chroma_documents(max_length: int = 900) -> list[dict[str, Any]]:
+    """Build stable Chroma documents from exhibit Markdown and related UI data."""
+    documents: list[dict[str, Any]] = []
+    for entry in ARTIFACT_REGISTRY.values():
+        identifier = artifact_id(entry["id"]) or entry["id"]
+        context = load_artifact_context(entry["id"])
+        context = RELATED_CONTENT_HEADING.sub("", context)
+        paragraphs = re.split(r"\n\s*\n", context)
+        chunks: list[str] = []
+        current = ""
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+            if current and len(current) + len(paragraph) + 2 > max_length:
+                chunks.append(current)
+                current = ""
+            while len(paragraph) > max_length:
+                chunks.append(paragraph[:max_length])
+                paragraph = paragraph[max_length:]
+            current = f"{current}\n\n{paragraph}".strip()
+        if current:
+            chunks.append(current)
+
+        for index, text in enumerate(chunks, start=1):
+            documents.append({
+                "id": f"md-{identifier}-{index:03d}",
+                "text": text,
+                "metadata": {
+                    "type": "exhibit_context",
+                    "topic": entry["title"],
+                    "artifact_id": identifier,
+                },
+            })
+
+        content_types = {
+            "related_speeches": "speech",
+            "related_locations": "location",
+            "related_books": "book",
+        }
+        fields_by_type = {
+            "speech": ("speaker", "date", "venue", "summary"),
+            "location": ("city", "description"),
+            "book": ("author", "year", "publisher", "description"),
+        }
+        for key, items in related_content(entry["id"]).items():
+            content_type = content_types[key]
+            for index, item in enumerate(items, start=1):
+                fields = fields_by_type[content_type]
+                parts = [f"Related {content_type}: {item.get('title') or item.get('name', '')}."]
+                parts.extend(
+                    f"{field.replace('_', ' ').title()}: {item[field]}."
+                    for field in fields
+                    if item.get(field) is not None and item.get(field) != ""
+                )
+                documents.append({
+                    "id": f"md-{identifier}-{content_type}-{index:03d}",
+                    "text": " ".join(parts),
+                    "metadata": {
+                        "type": f"related_{content_type}",
+                        "topic": item.get("title") or item.get("name", ""),
+                        "artifact_id": identifier,
+                    },
+                })
+    return documents
+
+
 def image_url(qr_id: str, filename: str) -> str:
     entry = get_artifact(qr_id)
     if not entry:
@@ -116,11 +253,13 @@ def artifact_payload(qr_id: str) -> Optional[dict[str, Any]]:
     ]
 
     return {
-        "id": entry["id"],
+        "id": artifact_id(qr_id) or entry["id"],
+        "artifact_id": artifact_id(qr_id) or entry["id"],
         "qr_id": entry["folder"],
         "title": entry["title"],
         "display_title": entry.get("display_title", entry["title"].upper()),
         "images": images,
+        **related_content(qr_id),
     }
 
 
@@ -128,6 +267,7 @@ ARTIFACT_SYSTEM_BASE = """You are an expert voice tour guide at the Dr. B.R. Amb
 You are standing beside a specific exhibit that the visitor scanned with a QR code.
 Answer only using the exhibit context provided below and well-established historical facts.
 Do not invent names of people in photographs or statues unless confirmed in the context.
+Do not invent related speeches, locations, books, dates, source URLs, or audio; related UI cards are rendered from structured exhibit data.
 If asked about unidentified figures, say they are members of the Constituent Assembly or refer to on-site signage.
 
 Multilingual Output Rules:

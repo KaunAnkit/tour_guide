@@ -21,6 +21,8 @@ from fastapi.staticfiles import StaticFiles
 
 from artifacts import (
     artifact_payload,
+    related_content,
+    related_content_for_artifacts,
     build_exhibit_system_prompt,
     get_artifact,
 )
@@ -123,6 +125,7 @@ Multilingual Output Rules:
 Voice Guide Guidelines:
 • Keep answers concise: exactly 2 to 3 engaging, spoken sentences (under 50 words) suitable for real-time speech synthesis.
 • Use the search_artifacts tool to locate relevant photos, speeches, or articles from the museum collection.
+• Do not invent related speeches, books, locations, dates, source URLs, or audio; the UI cards come only from structured exhibit source data.
 • When citing an exhibit from search results, mention it naturally (in Hindi: e.g. "प्रदर्शनी की इस ऐतिहासिक तस्वीर में देखिए...", in English: e.g. "Notice the archival photo...").
 • Never use markdown bolding, asterisks, bullet points, or lists — plain spoken sentences only.
 • In English: always write out years as spoken words (e.g. write "nineteen twenty-seven" instead of "1927", "nineteen fifty-six" instead of "1956").
@@ -177,7 +180,7 @@ HINDI_KEYWORD_MAP = {
 def search_artifacts(query: str) -> dict:
     """Query ChromaDB and return structured results with Hindi-to-English expansion."""
     if collection is None:
-        return {"text_chunks": [], "images": [], "articles": []}
+        return {"text_chunks": [], "images": [], "articles": [], "artifact_ids": []}
 
     # Expand query if it contains known Hindi terms so English embeddings match accurately
     expanded_terms = [v for k, v in HINDI_KEYWORD_MAP.items() if k in query]
@@ -188,11 +191,15 @@ def search_artifacts(query: str) -> dict:
     text_chunks = []
     images = []
     articles = []
+    artifact_ids = []
 
     for i, doc in enumerate(results["documents"][0]):
         meta = results["metadatas"][0][i] if results["metadatas"] else {}
         doc_type = meta.get("type", "text")
         topic = meta.get("topic", "")
+        artifact_identifier = meta.get("artifact_id")
+        if artifact_identifier and artifact_identifier not in artifact_ids:
+            artifact_ids.append(artifact_identifier)
 
         text_chunks.append({"text": doc, "type": doc_type, "topic": topic})
 
@@ -209,7 +216,12 @@ def search_artifacts(query: str) -> dict:
                 "caption": doc[:120],
             })
 
-    return {"text_chunks": text_chunks, "images": images, "articles": articles}
+    return {
+        "text_chunks": text_chunks,
+        "images": images,
+        "articles": articles,
+        "artifact_ids": artifact_ids,
+    }
 
 
 # ── Synthetic audio fallback generator (used only if Groq API fails) ─
@@ -316,7 +328,7 @@ async def transcribe(audio_bytes: bytes, filename: str) -> str:
 
 
 # ── Step 2 & 3: Chat with sequential tool-calling ─────────────────
-async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
+async def chat_with_tools(transcript: str) -> tuple[str, list[dict], dict[str, list[dict]]]:
     """
     Send transcript to openai/gpt-oss-120b with search_artifacts tool.
     Handles sequential tool_calls, feeds results back, returns final text + artifacts.
@@ -332,13 +344,14 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
             artifacts.append({"type": "article", "title": art["title"], "url": art["url"], "caption": art["caption"]})
         chunks = res.get("text_chunks", [])
         ans = chunks[0]["text"] if chunks else "Dr. B.R. Ambedkar was the chief architect of the Indian Constitution."
-        return ans, artifacts
+        return ans, artifacts, related_content_for_artifacts(res.get("artifact_ids", []))
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": transcript},
     ]
     collected_artifacts = []
+    collected_artifact_ids = []
     max_rounds = 4
 
     client = get_shared_client()
@@ -379,6 +392,9 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
 
                 if fn_name == "search_artifacts":
                     result = search_artifacts(fn_args.get("query", transcript))
+                    for identifier in result.get("artifact_ids", []):
+                        if identifier not in collected_artifact_ids:
+                            collected_artifact_ids.append(identifier)
                     for img in result.get("images", []):
                         collected_artifacts.append({
                             "type": "photo",
@@ -405,7 +421,11 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
 
         answer = msg.get("content", "") or ""
         if answer.strip():
-            return answer.strip(), collected_artifacts
+            return (
+                answer.strip(),
+                collected_artifacts,
+                related_content_for_artifacts(collected_artifact_ids),
+            )
 
         # If model returned no tool calls and empty content, nudge it once to reply
         messages.append({"role": "user", "content": "Please provide your concise voice tour guide response in the requested language."})
@@ -421,7 +441,7 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
         ans = "डॉक्टर भीमराव अंबेडकर भारतीय संविधान के मुख्य वास्तुकार और महान समाज सुधारक थे।"
     else:
         ans = chunks[0]["text"] if chunks else "Dr. B.R. Ambedkar was a profound jurist, economist, and social reformer."
-    return ans, collected_artifacts
+    return ans, collected_artifacts, related_content_for_artifacts(res.get("artifact_ids", []))
 
 
 # ── Exhibit-scoped chat (artifact context, no Chroma tools) ───────
@@ -706,12 +726,13 @@ async def converse(
             "text": "I didn't catch that. Could you please tap and ask again?",
             "transcript": "",
             "artifacts": [],
+            **related_content_for_artifacts([]),
         })
 
     log.info(f"Active Query/Transcript: {transcript}")
 
     # 2 & 3. Chat + sequential tool calls with ChromaDB
-    answer_text, artifacts = await chat_with_tools(transcript)
+    answer_text, artifacts, related = await chat_with_tools(transcript)
     log.info(f"Tour Guide Answer: {answer_text[:120]}…")
 
     # 4. Synthesise speech via Orpheus TTS
@@ -723,6 +744,7 @@ async def converse(
         "text": answer_text,
         "transcript": transcript,
         "artifacts": artifacts,
+        **related,
     })
 
 
@@ -783,6 +805,7 @@ async def converse_artifact(
             "audio_url": None,
             "text": "I didn't catch that. Could you please tap and ask again?",
             "transcript": "",
+            **related_content(qr_id),
         })
 
     log.info(f"Artifact converse [{qr_id}]: {transcript}")
@@ -793,6 +816,7 @@ async def converse_artifact(
         "audio_url": audio_url,
         "text": answer_text,
         "transcript": transcript,
+        **related_content(qr_id),
     })
 
 

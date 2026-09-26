@@ -32,9 +32,10 @@
             <div id="orb-ring-outer"></div>
             <div id="orb-ring-inner"></div>
             <div id="orb" role="button" aria-label="Tap to speak" tabindex="0">
+              <span class="voice-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg></span>
+              <p id="orb-label">Tap to speak</p>
               <div id="orb-core"></div>
             </div>
-            <p id="orb-label">Tap to speak</p>
           </div>
         </div>
 
@@ -108,6 +109,11 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div id="image-viewer" class="image-viewer hidden" role="dialog" aria-modal="true" aria-label="Full-size exhibit image" aria-hidden="true">
+    <button type="button" id="close-image-viewer" class="image-viewer-close" aria-label="Close image viewer">×</button>
+    <img id="image-viewer-image" class="image-viewer-image" alt="" />
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>

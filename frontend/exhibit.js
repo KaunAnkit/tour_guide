@@ -36,8 +36,14 @@
   const manualInput = document.getElementById('manual-id');
   const languageOverlay = document.getElementById('language-overlay');
   const languageOptions = languageOverlay.querySelectorAll('[data-language]');
+  const imageViewer = document.getElementById('image-viewer');
+  const imageViewerImage = document.getElementById('image-viewer-image');
+  const closeImageViewerButton = document.getElementById('close-image-viewer');
 
   let state = 'idle';
+  let imageViewerOpen = false;
+  let imageViewerScrollTop = 0;
+  let imageViewerReturnFocus = null;
   let currentQrId = null;
   let mediaRecorder = null;
   let audioChunks = [];
@@ -92,6 +98,7 @@
     const scanning = !scannerOverlay.classList.contains('hidden');
     app.className = '';
     if (next !== 'idle') app.classList.add('state-' + next);
+    if (imageViewerOpen) app.classList.add('image-viewer-open');
 
     const labels = {
       idle: currentQrId
@@ -108,6 +115,44 @@
     layoutContainer.classList.toggle('layout-active', active);
   }
 
+  function isInteractiveTarget(target) {
+    return target && target.closest && target.closest('button, input, textarea, select, a, [role="button"], [role="link"], [contenteditable="true"], img.card-image, .scanner-overlay, .language-overlay');
+  }
+
+  function setupPointerScroll() {
+    let gesture = null;
+    app.addEventListener('pointerdown', function (event) {
+      if (imageViewerOpen || event.pointerType !== 'mouse' || event.button !== 0) return;
+      if (isInteractiveTarget(event.target)) return;
+      gesture = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        lastY: event.clientY,
+        moved: false,
+      };
+      app.setPointerCapture(event.pointerId);
+    });
+
+    app.addEventListener('pointermove', function (event) {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      if (Math.abs(event.clientY - gesture.startY) > 3) {
+        gesture.moved = true;
+        app.classList.add('pointer-scrolling');
+      }
+      if (gesture.moved) window.scrollBy(0, gesture.lastY - event.clientY);
+      gesture.lastY = event.clientY;
+    });
+
+    function finishGesture(event) {
+      if (!gesture || (event && event.pointerId !== gesture.pointerId)) return;
+      gesture = null;
+      app.classList.remove('pointer-scrolling');
+    }
+
+    app.addEventListener('pointerup', finishGesture);
+    app.addEventListener('pointercancel', finishGesture);
+    app.addEventListener('lostpointercapture', finishGesture);
+  }
   function showToast(msg) {
     const t = document.createElement('div');
     t.className = 'error-toast';
@@ -130,7 +175,10 @@
       let sum = 0;
       for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
       const avg = (sum / bufferLength) / 255;
-      orb.style.transform = 'scale(' + (1 + avg * 0.42).toFixed(3) + ')';
+      const scale = layoutContainer.classList.contains('layout-active')
+        ? 1 + avg * 0.025
+        : 1 + avg * 0.42;
+      orb.style.transform = 'scale(' + scale.toFixed(3) + ')';
       orbGlow.style.opacity = (0.35 + avg * 0.65).toFixed(2);
       orbRingOuter.style.transform = 'scale(' + (1 + avg * 0.22).toFixed(3) + ')';
       orbRingInner.style.transform = 'scale(' + (1 + avg * 0.14).toFixed(3) + ')';
@@ -180,26 +228,57 @@
       .replace(/'/g, '&#039;');
   }
 
-  function renderArtifacts(artifacts) {
+  function renderArtifacts(artifacts, related) {
     artifactsGrid.innerHTML = '';
-    if (!artifacts || artifacts.length === 0) {
+    related = related || {};
+    const relatedItems = [];
+    ['related_speeches', 'related_locations', 'related_books'].forEach(function (key) {
+      const type = key === 'related_speeches' ? 'speech' : (key === 'related_locations' ? 'location' : 'book');
+      if (Array.isArray(related[key])) {
+        related[key].forEach(function (item) { relatedItems.push(Object.assign({ type: type }, item)); });
+      }
+    });
+    const allArtifacts = (artifacts || []).concat(relatedItems);
+    if (allArtifacts.length === 0) {
       artifactsArea.classList.add('hidden');
       return;
     }
 
     artifactsArea.classList.remove('hidden');
-    artifactsGrid.classList.toggle('single-record', artifacts.length === 1);
+    artifactsGrid.classList.toggle('single-record', allArtifacts.length === 1);
 
-    artifactsBadge.textContent = artifacts.length === 1
+    artifactsBadge.textContent = allArtifacts.length === 1
       ? 'Featured Exhibit'
-      : artifacts.length + ' Records';
+      : allArtifacts.length + ' Records';
     archivesTitle.textContent = currentQrId ? 'This Exhibit' : 'Exhibition Archives';
 
-    artifacts.forEach(function (artifact, index) {
+    allArtifacts.forEach(function (artifact, index) {
       const card = document.createElement('div');
       card.className = 'artifact-card';
       card.style.animationDelay = (index * 130) + 'ms';
       const type = (artifact.type || 'photo').toLowerCase();
+      if (type === 'speech' || type === 'location' || type === 'book') {
+        const labels = { speech: 'Related Speech', location: 'Related Location', book: 'Related Book' };
+        let details = '';
+        if (type === 'speech') {
+          if (artifact.speaker) details += '<p class="related-meta">' + escHtml(artifact.speaker) + '</p>';
+          if (artifact.date) details += '<p class="related-meta">' + escHtml(artifact.date) + '</p>';
+          if (artifact.venue) details += '<p class="related-meta">' + escHtml(artifact.venue) + '</p>';
+        } else if (type === 'location') {
+          if (artifact.city) details += '<p class="related-meta">' + escHtml(artifact.city) + '</p>';
+        } else {
+          const publication = [artifact.author, artifact.year].filter(function (value) { return value !== undefined && value !== null && value !== ''; }).join(' · ');
+          if (publication) details += '<p class="related-meta">' + escHtml(publication) + '</p>';
+          if (artifact.publisher) details += '<p class="related-meta">' + escHtml(artifact.publisher) + '</p>';
+        }
+        const description = artifact.summary || artifact.description || '';
+        const sourceUrl = safeExternalUrl(artifact.source_url);
+        card.classList.add('related-card', 'related-' + type);
+        card.innerHTML = '<div class="card-body"><span class="card-type type-' + type + '">' + labels[type] + '</span><h3 class="card-title">' + escHtml(artifact.title || artifact.name || '') + '</h3>' + details + (description ? '<p class="card-caption">' + escHtml(description) + '</p>' : '') + (sourceUrl ? '<a class="card-action" href="' + escHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Read speech</a>' : '') + '</div>';
+        artifactsGrid.appendChild(card);
+        return;
+      }
+
       let html = '';
       if (artifact.url && (type === 'image' || type === 'photo')) {
         const imgUrl = artifact.url.startsWith('http') ? artifact.url : (API_BASE + artifact.url);
@@ -211,8 +290,58 @@
       if (artifact.caption) html += '<p class="card-caption">' + escHtml(artifact.caption) + '</p>';
       html += '</div>';
       card.innerHTML = html;
+      const cardImage = card.querySelector('.card-image');
+      if (cardImage) {
+        cardImage.tabIndex = 0;
+        cardImage.setAttribute('role', 'button');
+        cardImage.setAttribute('aria-label', 'View full image: ' + (artifact.title || 'Museum Exhibit'));
+      }
       artifactsGrid.appendChild(card);
     });
+  }
+
+  function safeExternalUrl(value) {
+    if (!value) return '';
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function openImageViewer(image) {
+    imageViewerOpen = true;
+    imageViewerScrollTop = window.scrollY;
+    imageViewerReturnFocus = image;
+    imageViewerImage.src = image.currentSrc || image.src;
+    imageViewerImage.alt = image.alt || 'Exhibit image';
+    imageViewer.classList.remove('hidden');
+    imageViewer.setAttribute('aria-hidden', 'false');
+    app.classList.add('image-viewer-open');
+    document.documentElement.classList.add('viewer-open');
+    document.body.classList.add('viewer-open');
+    app.inert = true;
+    closeImageViewerButton.focus({ preventScroll: true });
+    closeImageViewerButton.focus({ preventScroll: true });
+  }
+
+  function closeImageViewer() {
+    if (!imageViewerOpen) return;
+    imageViewerOpen = false;
+    imageViewer.classList.add('hidden');
+    imageViewer.setAttribute('aria-hidden', 'true');
+    imageViewerImage.removeAttribute('src');
+    imageViewerImage.alt = '';
+    app.classList.remove('image-viewer-open');
+    document.documentElement.classList.remove('viewer-open');
+    document.body.classList.remove('viewer-open');
+    app.inert = false;
+    window.scrollTo(0, imageViewerScrollTop);
+    if (imageViewerReturnFocus && imageViewerReturnFocus.isConnected) {
+      imageViewerReturnFocus.focus({ preventScroll: true });
+    }
+    imageViewerReturnFocus = null;
   }
 
   function playGuideSpeech(url, onStarted) {
@@ -274,7 +403,7 @@
       const resp = await fetch(API_BASE + path, { method: 'POST', body: formData });
       if (!resp.ok) throw new Error('Server ' + resp.status);
       const data = await resp.json();
-      if (!currentQrId) renderArtifacts(data.artifacts || []);
+      if (!currentQrId) renderArtifacts(data.artifacts || [], data);
       applyTranscript(data, true);
     } catch (err) {
       console.error(err);
@@ -455,8 +584,8 @@
       });
       if (!narrate.ok) throw new Error('narrate failed');
       const spoken = await narrate.json();
+      renderArtifacts(data.images || [], data);
       applyTranscript(spoken, false, function () {
-        renderArtifacts(data.images || []);
         requestAnimationFrame(function () {
           responseColumn.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
@@ -520,5 +649,31 @@
     openArtifact(id);
   });
 
+  artifactsGrid.addEventListener('click', function (event) {
+    const image = event.target.closest && event.target.closest('.card-image');
+    if (image) openImageViewer(image);
+  });
+
+  artifactsGrid.addEventListener('keydown', function (event) {
+    const image = event.target.closest && event.target.closest('.card-image');
+    if (!image || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    openImageViewer(image);
+  });
+
+  closeImageViewerButton.addEventListener('click', closeImageViewer);
+
+  imageViewer.addEventListener('click', function (event) {
+    if (event.target === imageViewer) closeImageViewer();
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (imageViewerOpen && event.key === 'Escape') {
+      event.preventDefault();
+      closeImageViewer();
+    }
+  });
+
+  setupPointerScroll();
   setState('idle');
 })();
