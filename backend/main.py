@@ -516,16 +516,16 @@ async def synthesise_speech(text: str) -> Optional[str]:
             "model": TTS_MODEL,
             "input": chunk_str,
             "voice": TTS_VOICE,
-            "response_format": "pcm",  # Groq Orpheus returns raw 16-bit PCM — no WAV header to strip
+            "response_format": "wav",
         }
         t0 = time.time()
         try:
             resp = await client.post("/audio/speech", json=payload)
             if resp.status_code == 200:
                 elapsed = time.time() - t0
-                log.info(f"TTS chunk ({len(chunk_str)} chars) in {elapsed:.2f}s, pcm={len(resp.content)} bytes")
-                # resp.content is already raw PCM — pass it straight through
-                return resp.content
+                pcm = extract_pcm_from_groq_wav(resp.content)
+                log.info(f"TTS chunk ({len(chunk_str)} chars) in {elapsed:.2f}s, pcm={len(pcm)} bytes")
+                return pcm
             else:
                 log.warning(f"Groq TTS error {resp.status_code}: {resp.text}")
                 return None
