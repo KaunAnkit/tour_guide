@@ -214,7 +214,7 @@
     });
   }
 
-  function playGuideSpeech(url) {
+  function playGuideSpeech(url, onStarted) {
     setState('speaking');
     const fullUrl = url.startsWith('http') ? url : (API_BASE + url);
     audioPlayer.src = fullUrl;
@@ -222,6 +222,7 @@
     const analyser = setupPlayerAudio();
     audioPlayer.play().then(function () {
       startOrbPulse(analyser);
+      if (onStarted) onStarted();
     }).catch(function () {
       stopOrbPulse();
       setState('idle');
@@ -236,7 +237,7 @@
     };
   }
 
-  function applyTranscript(data, includeUser) {
+  function applyTranscript(data, includeUser, onSpeechStarted) {
     const hasHindi = (data.text && /[\u0900-\u097F]/.test(data.text)) ||
       (data.transcript && /[\u0900-\u097F]/.test(data.transcript));
     isCurrentHindi = Boolean(hasHindi);
@@ -259,7 +260,7 @@
       transcriptGuide.classList.add('entering');
     }
 
-    if (data.audio_url) playGuideSpeech(data.audio_url);
+    if (data.audio_url) playGuideSpeech(data.audio_url, onSpeechStarted);
     else setState('idle');
   }
 
@@ -446,8 +447,6 @@
       currentQrId = data.qr_id || qrId;
       headerSubtitle.textContent = data.title || 'Exhibit Voice Guide';
 
-      renderArtifacts(data.images || []);
-
       const narrate = await fetch(API_BASE + '/artifact/' + encodeURIComponent(currentQrId) + '/narrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -455,7 +454,9 @@
       });
       if (!narrate.ok) throw new Error('narrate failed');
       const spoken = await narrate.json();
-      applyTranscript(spoken, false);
+      applyTranscript(spoken, false, function () {
+        renderArtifacts(data.images || []);
+      });
     } catch (err) {
       console.error(err);
       showToast('Could not load exhibit. Try again.');
