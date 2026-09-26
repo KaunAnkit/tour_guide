@@ -150,16 +150,26 @@ Requirements:
 • Introduce what the visitor sees and why it matters to Dr. Ambedkar's legacy.
 • Mention the displayed images naturally if relevant.
 • Use only facts from the exhibit context below.
+• Mandatory facts for this exhibit: the Constitution was adopted on 26 November 1949, the final handwritten copies were signed on 24 January 1950, and it came into force on 26 January 1950.
+• Never replace those dates with another year. Do not say January 2000, 2001, or any date other than the dates stated above.
+• Do not claim that individual statues are identifiable unless the exhibit signage confirms their names.
 • Plain spoken English unless the exhibit context specifies otherwise.
 • No markdown, bullet points, or lists.
 • In English: write years as spoken words (e.g. "nineteen fifty" not "1950").
 """
 
 
-def build_exhibit_system_prompt(qr_id: str, *, for_narration: bool = False) -> str:
+def build_exhibit_system_prompt(
+    qr_id: str,
+    *,
+    for_narration: bool = False,
+    language: str = "en",
+) -> str:
     """Combine base prompt, optional narration instructions, and loaded context."""
     context = load_artifact_context(qr_id)
     base = ARTIFACT_NARRATION_PROMPT if for_narration else ARTIFACT_SYSTEM_BASE
+    language_name = "Hindi (Devanagari script)" if language == "hi" else "English"
+    language_instruction = f"\n\nOutput language requirement: Respond only in {language_name}."
     if context:
-        return f"{base}\n\n--- EXHIBIT CONTEXT ---\n\n{context}"
-    return base
+        return f"{base}{language_instruction}\n\n--- EXHIBIT CONTEXT ---\n\n{context}"
+    return f"{base}{language_instruction}"

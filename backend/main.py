@@ -14,7 +14,7 @@ from typing import Optional
 
 import chromadb, httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -425,13 +425,26 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
 
 
 # ── Exhibit-scoped chat (artifact context, no Chroma tools) ───────
-async def chat_with_exhibit_context(qr_id: str, transcript: str, *, for_narration: bool = False) -> str:
+async def chat_with_exhibit_context(
+    qr_id: str,
+    transcript: str,
+    *,
+    for_narration: bool = False,
+    language: str = "en",
+) -> str:
     """Send transcript to LLM with loaded exhibit markdown context."""
-    system_prompt = build_exhibit_system_prompt(qr_id, for_narration=for_narration)
+    system_prompt = build_exhibit_system_prompt(qr_id, for_narration=for_narration, language=language)
     key = os.getenv("GROQ_API_KEY", "").strip()
 
     if for_narration:
-        user_content = "Please deliver the exhibit introduction now."
+        if language == "hi":
+            user_content = (
+                "इस प्रदर्शनी का परिचय अभी हिंदी में दें। केवल ये सही तिथियां इस्तेमाल करें: "
+                "संविधान 26 नवंबर 1949 को अपनाया गया, अंतिम हस्ताक्षर 24 जनवरी 1950 को पूरे हुए, "
+                "और संविधान 26 जनवरी 1950 को लागू हुआ।"
+            )
+        else:
+            user_content = "Please deliver the exhibit introduction now. Use only the verified exhibit dates in the context."
     else:
         user_content = transcript
 
@@ -439,13 +452,18 @@ async def chat_with_exhibit_context(qr_id: str, transcript: str, *, for_narratio
         entry = get_artifact(qr_id)
         title = entry["title"] if entry else "this exhibit"
         if for_narration:
-            return (
+            narration = (
                 f"Welcome to the {title} exhibit at the Dr. B.R. Ambedkar National Memorial. "
                 "This display recreates the historic signing of the Constitution of India in January nineteen fifty, "
                 "a moment central to Dr. Ambedkar's legacy as chief architect of the Constitution. "
                 "The images beside you show pages from the original handwritten Constitution and "
                 "Jawaharlal Nehru signing the document in the Constituent Assembly Hall."
             )
+            if language == "hi":
+                return "यह प्रदर्शनी डॉ. बी. आर. आंबेडकर राष्ट्रीय स्मारक में भारतीय संविधान पर हस्ताक्षर के ऐतिहासिक क्षण को दिखाती है। यहां आप संविधान पर हस्ताक्षर करते हुए सदस्यों का जीवन-आकार दृश्य, संविधान के हस्तलिखित पृष्ठ और जवाहरलाल नेहरू को हस्ताक्षर करते हुए देख सकते हैं। अंतिम हस्ताक्षर चौबीस जनवरी उन्नीस सौ पचास को पूरे हुए और संविधान छब्बीस जनवरी उन्नीस सौ पचास को लागू हुआ। डॉ. आंबेडकर प्रारूप समिति के अध्यक्ष और संविधान के प्रमुख वास्तुकार थे, इसलिए यह दृश्य उनके स्मारक में विशेष महत्व रखता है।"
+            return narration
+        if language == "hi":
+            return "यह प्रदर्शनी भारतीय संविधान पर हस्ताक्षर के ऐतिहासिक क्षण और डॉ. आंबेडकर की प्रारूप समिति के अध्यक्ष तथा संविधान के प्रमुख वास्तुकार के रूप में भूमिका की कहानी बताती है।"
         if is_hindi_text(transcript):
             return "यह प्रदर्शनी भारतीय संविधान पर हस्ताक्षर के ऐतिहासिक क्षण को दर्शाती है, जिसमें डॉ. अंबेडकर की महत्वपूर्ण भूमिका शामिल है।"
         return f"This exhibit at the memorial tells the story of the Constitution signing and Dr. Ambedkar's role as its chief architect."
@@ -458,23 +476,34 @@ async def chat_with_exhibit_context(qr_id: str, transcript: str, *, for_narratio
         "model": CHAT_MODEL,
         "messages": messages,
         "temperature": 0.5,
-        "max_tokens": 512 if not for_narration else 600,
+        "max_tokens": 700 if not for_narration else 1400,
+        "reasoning_effort": "low",
     }
     client = get_shared_client()
     try:
         resp = await client.post("/chat/completions", json=payload)
         if resp.status_code == 200:
-            answer = resp.json()["choices"][0]["message"].get("content", "") or ""
+            choice = resp.json()["choices"][0]
+            answer = choice["message"].get("content", "") or ""
             if answer.strip():
                 return answer.strip()
-        log.error(f"Exhibit chat error {resp.status_code}: {resp.text}")
+            log.error(
+                "Exhibit chat returned no visible content: finish_reason=%s",
+                choice.get("finish_reason"),
+            )
+        else:
+            log.error(f"Exhibit chat error {resp.status_code}: {resp.text}")
     except Exception as e:
         log.error(f"Exhibit chat request failed: {e}")
 
     if for_narration:
         entry = get_artifact(qr_id)
         title = entry["title"] if entry else "this exhibit"
-        return f"Welcome to the {title} exhibit at the Dr. B.R. Ambedkar National Memorial."
+        if language == "hi":
+            return "यह प्रदर्शनी भारतीय संविधान पर हस्ताक्षर के ऐतिहासिक क्षण को दिखाती है। यहां संविधान के हस्तलिखित पृष्ठ और हस्ताक्षर करते हुए जवाहरलाल नेहरू का चित्र दिखाई देता है। अंतिम हस्ताक्षर चौबीस जनवरी उन्नीस सौ पचास को पूरे हुए और संविधान छब्बीस जनवरी उन्नीस सौ पचास को लागू हुआ। डॉ. आंबेडकर प्रारूप समिति के अध्यक्ष और संविधान के प्रमुख वास्तुकार थे।"
+        return f"This {title} exhibit shows the historic signing of India's Constitution. The display includes handwritten Constitution pages and a photograph of Jawaharlal Nehru signing the document. The final signatures were completed on January twenty-fourth, nineteen fifty, and the Constitution came into force on January twenty-sixth, nineteen fifty. Dr. Ambedkar chaired the Drafting Committee and is regarded as the Constitution's chief architect."
+    if language == "hi":
+        return "यह प्रदर्शनी भारतीय संविधान पर हस्ताक्षर और डॉ. आंबेडकर की प्रारूप समिति के अध्यक्ष के रूप में भूमिका के बारे में बताती है। कृपया अपना प्रश्न दोबारा पूछें, मैं इस प्रदर्शनी के तथ्यों के आधार पर उत्तर दूंगा।"
     if is_hindi_text(transcript):
         return "कृपया अपना प्रश्न दोबारा पूछें — मैं इस प्रदर्शनी के बारे में और बता सकता हूँ।"
     return "I can share more about this exhibit — please ask your question again."
@@ -707,12 +736,15 @@ async def get_artifact_info(qr_id: str):
 
 
 @app.post("/artifact/{qr_id}/narrate")
-async def narrate_artifact(qr_id: str):
+async def narrate_artifact(qr_id: str, payload: Optional[dict] = Body(None)):
     if get_artifact(qr_id) is None:
         raise HTTPException(status_code=404, detail=f"Unknown artifact: {qr_id}")
 
-    log.info(f"Narrating artifact: {qr_id}")
-    narration = await chat_with_exhibit_context(qr_id, "", for_narration=True)
+    language = (payload or {}).get("language", "en")
+    if language not in {"en", "hi"}:
+        raise HTTPException(status_code=400, detail="Unsupported language. Use 'en' or 'hi'.")
+    log.info(f"Narrating artifact: {qr_id} in {language}")
+    narration = await chat_with_exhibit_context(qr_id, "", for_narration=True, language=language)
     audio_url = await synthesise_speech(narration)
 
     return JSONResponse({
@@ -726,9 +758,12 @@ async def converse_artifact(
     qr_id: str,
     audio: Optional[UploadFile] = File(None),
     query: Optional[str] = Form(None),
+    language: str = Form("en"),
 ):
     if get_artifact(qr_id) is None:
         raise HTTPException(status_code=404, detail=f"Unknown artifact: {qr_id}")
+    if language not in {"en", "hi"}:
+        raise HTTPException(status_code=400, detail="Unsupported language. Use 'en' or 'hi'.")
 
     if audio is not None:
         audio_bytes = await audio.read()
@@ -751,7 +786,7 @@ async def converse_artifact(
         })
 
     log.info(f"Artifact converse [{qr_id}]: {transcript}")
-    answer_text = await chat_with_exhibit_context(qr_id, transcript)
+    answer_text = await chat_with_exhibit_context(qr_id, transcript, language=language)
     audio_url = await synthesise_speech(answer_text)
 
     return JSONResponse({

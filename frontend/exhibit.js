@@ -33,6 +33,8 @@
   const closeScanner = document.getElementById('close-scanner');
   const manualForm = document.getElementById('manual-form');
   const manualInput = document.getElementById('manual-id');
+  const languageOverlay = document.getElementById('language-overlay');
+  const languageOptions = languageOverlay.querySelectorAll('[data-language]');
 
   let state = 'idle';
   let currentQrId = null;
@@ -42,6 +44,7 @@
   let cameraStream = null;
   let scanTimer = null;
   let isCurrentHindi = false;
+  let selectedLanguage = 'en';
 
   let audioCtx = null;
   let playerSource = null;
@@ -262,6 +265,7 @@
 
   async function sendConverseRequest(formData) {
     try {
+      if (!formData.has('language')) formData.append('language', selectedLanguage);
       const path = currentQrId
         ? '/artifact/' + encodeURIComponent(currentQrId) + '/converse'
         : '/converse';
@@ -422,6 +426,14 @@
     headerSubtitle.textContent = 'Exhibit Voice Guide';
 
     try {
+      const language = await chooseLanguage();
+      if (!language) {
+        currentQrId = null;
+        headerSubtitle.textContent = 'Exhibit Voice Guide';
+        setState('idle');
+        return;
+      }
+      selectedLanguage = language;
       const resp = await fetch(API_BASE + '/artifact/' + encodeURIComponent(qrId));
       if (resp.status === 404) {
         showToast('Unknown exhibit: ' + qrId);
@@ -437,7 +449,9 @@
       renderArtifacts(data.images || []);
 
       const narrate = await fetch(API_BASE + '/artifact/' + encodeURIComponent(currentQrId) + '/narrate', {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: selectedLanguage })
       });
       if (!narrate.ok) throw new Error('narrate failed');
       const spoken = await narrate.json();
@@ -447,6 +461,25 @@
       showToast('Could not load exhibit. Try again.');
       setState('idle');
     }
+  }
+
+  function chooseLanguage() {
+    languageOverlay.classList.remove('hidden');
+    languageOverlay.setAttribute('aria-hidden', 'false');
+    return new Promise(function (resolve) {
+      function finish(language) {
+        languageOverlay.classList.add('hidden');
+        languageOverlay.setAttribute('aria-hidden', 'true');
+        languageOptions.forEach(function (option) {
+          option.removeEventListener('click', option._languageHandler);
+        });
+        resolve(language);
+      }
+      languageOptions.forEach(function (option) {
+        option._languageHandler = function () { finish(option.dataset.language); };
+        option.addEventListener('click', option._languageHandler);
+      });
+    });
   }
 
   orb.addEventListener('click', function () {
