@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Exhibit Guide — Dr Ambedkar National Memorial</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/exhibit.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="header-inner">
+        <div class="logo-mark" aria-hidden="true">
+          <img src="/static/assets/brlogo.png" alt="Dr Ambedkar National Memorial Logo" />
+        </div>
+        <div class="header-text">
+          <h1>Dr Ambedkar National Memorial</h1>
+          <p class="subtitle" id="header-subtitle">Exhibit Voice Guide</p>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="layout-container">
+      <section id="voice-column" aria-label="Voice Interaction">
+        <div id="orb-scaler">
+          <div id="orb-area">
+            <div id="orb-glow"></div>
+            <div id="orb-ring-outer"></div>
+            <div id="orb-ring-inner"></div>
+            <div id="orb" role="button" aria-label="Tap to speak" tabindex="0">
+              <div id="orb-core"></div>
+            </div>
+            <p id="orb-label">Tap to speak</p>
+          </div>
+        </div>
+
+        <section id="suggestions" aria-label="Scan exhibit QR">
+          <p class="suggestions-label">Scan an exhibit QR / क्यूआर स्कैन करें</p>
+          <button class="chip-scan" id="scan-qr-chip" type="button">
+            <span class="chip-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h3v-6h-6z"/></svg></span>
+            Scan QR
+          </button>
+        </section>
+      </section>
+
+      <aside id="response-column" aria-label="Memorial Guide Response Hub">
+        <div id="transcript-area">
+          <div id="transcript-user" class="transcript-bubble hidden">
+            <span class="transcript-tag">You</span>
+            <p class="transcript-text"></p>
+          </div>
+          <div id="transcript-guide" class="transcript-bubble hidden">
+            <span class="transcript-tag">Memorial Guide</span>
+            <p class="transcript-text"></p>
+          </div>
+        </div>
+
+        <div id="artifacts-area" class="hidden">
+          <div class="artifacts-panel-header">
+            <div class="panel-header-title">
+              <span class="panel-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="7"/><line x1="10" y1="18" x2="10" y2="7"/><line x1="14" y1="18" x2="14" y2="7"/><line x1="18" y1="18" x2="18" y2="7"/><polyline points="2 7 12 2 22 7"/></svg></span>
+              <h2 id="archives-title">Exhibition Archives</h2>
+            </div>
+            <span id="artifacts-badge" class="artifacts-badge">Artifacts</span>
+          </div>
+          <div id="artifacts-grid"></div>
+        </div>
+      </aside>
+    </main>
+
+    <audio id="audio-player" preload="none"></audio>
+
+    <!-- QR overlay — extra to the homepage UI, still inside 800×480 -->
+    <div id="scanner-overlay" class="scanner-overlay hidden" aria-hidden="true">
+      <div class="scanner-sheet">
+        <div class="scanner-toolbar">
+          <button type="button" id="close-scanner" class="chip">Close</button>
+          <p class="scanner-title">Scan exhibit QR</p>
+        </div>
+        <div class="scanner-stage">
+          <video id="scanner-video" playsinline muted autoplay></video>
+          <canvas id="scanner-canvas" hidden></canvas>
+          <div class="scan-frame" aria-hidden="true"></div>
+          <p id="scanner-status" class="scanner-status">Starting camera…</p>
+        </div>
+        <form id="manual-form" class="manual-form">
+          <label for="manual-id">Or enter exhibit ID</label>
+          <div class="manual-row">
+            <input id="manual-id" type="text" placeholder="DANM-EXH-001" autocomplete="off" spellcheck="false" />
+            <button type="submit" class="chip">Open</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="/exhibit.js"></script>
+</body>
+</html>

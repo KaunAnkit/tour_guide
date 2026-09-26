@@ -19,6 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from artifacts import (
+    artifact_payload,
+    build_exhibit_system_prompt,
+    get_artifact,
+)
+
 # ── Config ──────────────────────────────────────────────────────────
 load_dotenv(override=True)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
@@ -32,6 +38,7 @@ BASE_DIR   = pathlib.Path(__file__).parent
 AUDIO_DIR  = BASE_DIR / "audio_cache"
 CHROMA_DIR = BASE_DIR / "chroma_db"
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
+QR_DATA_DIR  = BASE_DIR.parent / "qr_data"
 
 AUDIO_DIR.mkdir(exist_ok=True)
 
@@ -65,6 +72,18 @@ async def get_style_css():
 @app.get("/app.js")
 async def get_app_js():
     return FileResponse(str(FRONTEND_DIR / "app.js"), media_type="application/javascript")
+
+@app.get("/exhibit.css")
+async def get_exhibit_css():
+    return FileResponse(str(FRONTEND_DIR / "exhibit.css"), media_type="text/css")
+
+@app.get("/exhibit.js")
+async def get_exhibit_js():
+    return FileResponse(str(FRONTEND_DIR / "exhibit.js"), media_type="application/javascript")
+
+# Serve QR artifact images and context assets
+if QR_DATA_DIR.is_dir():
+    app.mount("/qr_data", StaticFiles(directory=str(QR_DATA_DIR)), name="qr_data")
 
 # Serve frontend static assets (exhibits, css, js)
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend_static")
@@ -405,6 +424,62 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict]]:
     return ans, collected_artifacts
 
 
+# ── Exhibit-scoped chat (artifact context, no Chroma tools) ───────
+async def chat_with_exhibit_context(qr_id: str, transcript: str, *, for_narration: bool = False) -> str:
+    """Send transcript to LLM with loaded exhibit markdown context."""
+    system_prompt = build_exhibit_system_prompt(qr_id, for_narration=for_narration)
+    key = os.getenv("GROQ_API_KEY", "").strip()
+
+    if for_narration:
+        user_content = "Please deliver the exhibit introduction now."
+    else:
+        user_content = transcript
+
+    if not key or key.startswith("gsk_YOUR_KEY"):
+        entry = get_artifact(qr_id)
+        title = entry["title"] if entry else "this exhibit"
+        if for_narration:
+            return (
+                f"Welcome to the {title} exhibit at the Dr. B.R. Ambedkar National Memorial. "
+                "This display recreates the historic signing of the Constitution of India in January nineteen fifty, "
+                "a moment central to Dr. Ambedkar's legacy as chief architect of the Constitution. "
+                "The images beside you show pages from the original handwritten Constitution and "
+                "Jawaharlal Nehru signing the document in the Constituent Assembly Hall."
+            )
+        if is_hindi_text(transcript):
+            return "यह प्रदर्शनी भारतीय संविधान पर हस्ताक्षर के ऐतिहासिक क्षण को दर्शाती है, जिसमें डॉ. अंबेडकर की महत्वपूर्ण भूमिका शामिल है।"
+        return f"This exhibit at the memorial tells the story of the Constitution signing and Dr. Ambedkar's role as its chief architect."
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    payload = {
+        "model": CHAT_MODEL,
+        "messages": messages,
+        "temperature": 0.5,
+        "max_tokens": 512 if not for_narration else 600,
+    }
+    client = get_shared_client()
+    try:
+        resp = await client.post("/chat/completions", json=payload)
+        if resp.status_code == 200:
+            answer = resp.json()["choices"][0]["message"].get("content", "") or ""
+            if answer.strip():
+                return answer.strip()
+        log.error(f"Exhibit chat error {resp.status_code}: {resp.text}")
+    except Exception as e:
+        log.error(f"Exhibit chat request failed: {e}")
+
+    if for_narration:
+        entry = get_artifact(qr_id)
+        title = entry["title"] if entry else "this exhibit"
+        return f"Welcome to the {title} exhibit at the Dr. B.R. Ambedkar National Memorial."
+    if is_hindi_text(transcript):
+        return "कृपया अपना प्रश्न दोबारा पूछें — मैं इस प्रदर्शनी के बारे में और बता सकता हूँ।"
+    return "I can share more about this exhibit — please ask your question again."
+
+
 # ── Year-to-spoken-words converter for natural TTS pronunciation ──
 def _convert_years_to_words(text: str) -> str:
     """Convert 4-digit years (1800-2099) to spoken-word form for natural TTS.
@@ -622,10 +697,79 @@ async def converse(
     })
 
 
-# ── Serve frontend index at root ───────────────────────────────────
+# ── QR Artifact endpoints ──────────────────────────────────────────
+@app.get("/artifact/{qr_id}")
+async def get_artifact_info(qr_id: str):
+    payload = artifact_payload(qr_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact: {qr_id}")
+    return JSONResponse(payload)
+
+
+@app.post("/artifact/{qr_id}/narrate")
+async def narrate_artifact(qr_id: str):
+    if get_artifact(qr_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact: {qr_id}")
+
+    log.info(f"Narrating artifact: {qr_id}")
+    narration = await chat_with_exhibit_context(qr_id, "", for_narration=True)
+    audio_url = await synthesise_speech(narration)
+
+    return JSONResponse({
+        "audio_url": audio_url,
+        "text": narration,
+    })
+
+
+@app.post("/artifact/{qr_id}/converse")
+async def converse_artifact(
+    qr_id: str,
+    audio: Optional[UploadFile] = File(None),
+    query: Optional[str] = Form(None),
+):
+    if get_artifact(qr_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact: {qr_id}")
+
+    if audio is not None:
+        audio_bytes = await audio.read()
+        if len(audio_bytes) >= 100:
+            transcript = await transcribe(audio_bytes, audio.filename or "recording.webm")
+        elif query:
+            transcript = query
+        else:
+            transcript = "Tell me about this exhibit."
+    elif query:
+        transcript = query
+    else:
+        transcript = "Tell me about this exhibit."
+
+    if not transcript.strip():
+        return JSONResponse({
+            "audio_url": None,
+            "text": "I didn't catch that. Could you please tap and ask again?",
+            "transcript": "",
+        })
+
+    log.info(f"Artifact converse [{qr_id}]: {transcript}")
+    answer_text = await chat_with_exhibit_context(qr_id, transcript)
+    audio_url = await synthesise_speech(answer_text)
+
+    return JSONResponse({
+        "audio_url": audio_url,
+        "text": answer_text,
+        "transcript": transcript,
+    })
+
+
+# ── Serve frontend pages ───────────────────────────────────────────
 @app.get("/")
 async def serve_index():
     return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+@app.get("/exhibit")
+async def serve_exhibit():
+    return FileResponse(str(FRONTEND_DIR / "exhibit.html"))
 
 
 # ── Health check ────────────────────────────────────────────────────
@@ -641,7 +785,10 @@ async def health():
 # ── Cleanup ─────────────────────────────────────────────────────────
 @app.on_event("shutdown")
 async def shutdown():
-    await groq.aclose()
+    global _shared_client
+    if _shared_client and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
     # Clean up old audio files (>1 hour)
     cutoff = time.time() - 3600
     for f in list(AUDIO_DIR.glob("*.wav")) + list(AUDIO_DIR.glob("*.mp3")):
