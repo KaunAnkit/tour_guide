@@ -21,6 +21,7 @@
   const artifactsGrid = document.getElementById('artifacts-grid');
   const audioPlayer = document.getElementById('audio-player');
   const layoutContainer = document.getElementById('main');
+  const responseColumn = document.getElementById('response-column');
   const artifactsBadge = document.getElementById('artifacts-badge');
   const artifactsArea = document.getElementById('artifacts-area');
   const archivesTitle = document.getElementById('archives-title');
@@ -456,6 +457,9 @@
       const spoken = await narrate.json();
       applyTranscript(spoken, false, function () {
         renderArtifacts(data.images || []);
+        requestAnimationFrame(function () {
+          responseColumn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
       });
     } catch (err) {
       console.error(err);
