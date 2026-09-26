@@ -184,10 +184,12 @@ body {
 
 .layout-container.layout-active #voice-column {
   max-width: 100%;
-  justify-content: space-around;
+  justify-content: center;
   align-items: center;
-  padding: 4px 0;
+  gap: 10px;
+  padding: 6px 0;
 }
+
 
 /* ===== ORB SCALER & ECLIPSE RING ===== */
 #orb-scaler {
@@ -202,12 +204,11 @@ body {
 }
 
 .layout-container.layout-active #orb-scaler {
-  transform: scale(0.66);
+  transform: scale(0.72);
   transform-origin: center center;
-  margin: 0;
-  height: 124px;
   flex-shrink: 0;
 }
+
 
 #orb-area {
   position: relative;
@@ -537,8 +538,9 @@ body {
   justify-content: center;
   gap: 4px;
   width: 100%;
-  max-width: 260px;
+  max-width: 240px;
 }
+
 
 .layout-container.layout-active .chip {
   padding: 2px 7px;
@@ -575,18 +577,20 @@ body {
   pointer-events: auto;
 }
 
+
 /* ===== CONVERSATION TRANSCRIPT AREA ===== */
 #transcript-area {
   width: 100%;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 140px;
+  gap: 5px;
+  max-height: 120px;
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
+
 
 #transcript-area::-webkit-scrollbar {
   display: none;
@@ -717,8 +721,9 @@ body {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   align-items: start;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -728,6 +733,7 @@ body {
 #artifacts-grid::-webkit-scrollbar {
   display: none;
 }
+
 
 /* Dynamic Featured Exhibit Layout (when only 1 record is returned) */
 #artifacts-grid.single-record {
@@ -739,9 +745,10 @@ body {
 }
 
 #artifacts-grid.single-record .artifact-card .card-image {
-  height: 185px;
+  height: 148px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 
 #artifacts-grid.single-record .artifact-card .card-body {
   padding: 8px 10px;
