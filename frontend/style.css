@@ -178,6 +178,11 @@ button, input, textarea, select {
   gap: 10px;
 }
 
+.layout-container.layout-active {
+  align-content: start;
+  grid-template-rows: auto 112px;
+}
+
 #voice-column {
   position: relative;
   display: flex;
@@ -204,6 +209,7 @@ button, input, textarea, select {
   margin-top: 0;
   width: 100%;
   min-height: 112px;
+  height: 112px;
 }
 
 #orb-scaler {
@@ -331,8 +337,8 @@ button, input, textarea, select {
   padding: 18px 20px;
   border: 1px solid rgba(10, 45, 107, 0.9);
   border-radius: 22px;
-  background: linear-gradient(180deg, #0d5bd7 0%, #0b3f9f 100%);
-  box-shadow: 0 12px 28px rgba(13, 91, 215, 0.24);
+  background: linear-gradient(180deg, #2f7ff0 0%, #1b58ba 100%);
+  box-shadow: 0 14px 28px rgba(13, 91, 215, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   color: #ffffff;
   animation: none;
 }
@@ -389,16 +395,19 @@ button, input, textarea, select {
 }
 
 .layout-container.layout-active #orb-label {
-  position: static;
-  left: auto;
+  position: absolute;
+  top: 50%;
+  left: 50%;
   bottom: auto;
-  transform: none;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 40px);
   font-size: 0.9rem;
   line-height: 1.2;
   letter-spacing: 0.06em;
   white-space: normal;
   text-align: center;
-  color: inherit;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(8, 38, 91, 0.24);
   z-index: 2;
   pointer-events: none;
 }

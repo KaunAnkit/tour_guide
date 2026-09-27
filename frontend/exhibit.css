@@ -65,11 +65,11 @@ body,
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #ffffff;
-  background: linear-gradient(180deg, #0d5bd7 0%, #0b3f9f 100%);
-  border: 1px solid rgba(10, 45, 107, 0.9);
+  background: linear-gradient(180deg, #2f7ff0 0%, #1b58ba 100%);
+  border: 1px solid rgba(19, 76, 164, 0.82);
   border-radius: 30px;
   cursor: pointer;
-  box-shadow: 0 18px 36px rgba(13, 91, 215, 0.28);
+  box-shadow: none;
 }
 
 #scan-qr-chip .chip-icon {
@@ -85,6 +85,50 @@ body,
 #main.layout-active #scan-qr-chip {
   min-height: 92px;
   width: 100%;
+}
+
+#app.state-processing #main.layout-active {
+  align-content: center;
+}
+
+#main.layout-active #orb {
+  display: grid;
+  grid-template-rows: 22px auto;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  background: linear-gradient(180deg, #2f7ff0 0%, #1b58ba 100%);
+  border-color: rgba(19, 76, 164, 0.82);
+  box-shadow: none;
+}
+
+#app.state-processing #main.layout-active #orb {
+  animation: none;
+  box-shadow: none !important;
+}
+
+#main.layout-active #orb-label {
+  position: absolute;
+  top: calc(50% + 12px);
+  left: 50%;
+  bottom: auto;
+  transform: translateX(-50%);
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  line-height: 1.1;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(8, 38, 91, 0.24);
+}
+
+#main.layout-active {
+  align-content: start;
+  grid-template-rows: auto 112px;
+}
+
+#main.layout-active #voice-column {
+  height: 112px;
+  min-height: 112px;
 }
 
 #main.layout-active #response-column {
