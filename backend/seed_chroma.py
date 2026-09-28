@@ -8,7 +8,6 @@ Run once:  python seed_chroma.py
 """
 
 import chromadb, os, pathlib
-from artifacts import artifact_chroma_documents
 
 DB_PATH = str(pathlib.Path(__file__).parent / "chroma_db")
 
@@ -280,8 +279,6 @@ documents = [
         },
     },
 ]
-
-documents.extend(artifact_chroma_documents())
 
 # ── Upsert into ChromaDB ───────────────────────────────────────────
 ids = [d["id"] for d in documents]

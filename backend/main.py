@@ -9,7 +9,7 @@ FastAPI server with a single POST /converse endpoint that:
   5. Returns JSON: {audio_url, text, transcript, artifacts}
 """
 
-import json, os, pathlib, uuid, time, logging, math, wave, io, asyncio
+import json, os, pathlib, uuid, time, logging, math, wave, io, asyncio, re, unicodedata
 from typing import Optional
 
 import chromadb, httpx
@@ -21,8 +21,6 @@ from fastapi.staticfiles import StaticFiles
 
 from artifacts import (
     artifact_payload,
-    related_content,
-    related_content_for_artifacts,
     build_exhibit_system_prompt,
     get_artifact,
 )
@@ -41,6 +39,7 @@ AUDIO_DIR  = BASE_DIR / "audio_cache"
 CHROMA_DIR = BASE_DIR / "chroma_db"
 FRONTEND_DIR = BASE_DIR.parent / "frontend"
 QR_DATA_DIR  = BASE_DIR.parent / "qr_data"
+CONTENT_DIR = BASE_DIR.parent / "content"
 
 AUDIO_DIR.mkdir(exist_ok=True)
 
@@ -87,6 +86,10 @@ async def get_exhibit_js():
 if QR_DATA_DIR.is_dir():
     app.mount("/qr_data", StaticFiles(directory=str(QR_DATA_DIR)), name="qr_data")
 
+# Serve only the repository's intended archival content directory.
+if CONTENT_DIR.is_dir():
+    app.mount("/content", StaticFiles(directory=str(CONTENT_DIR)), name="archival_content")
+
 # Serve frontend static assets (exhibits, css, js)
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend_static")
 
@@ -124,13 +127,21 @@ Multilingual Output Rules:
 
 Voice Guide Guidelines:
 • Keep answers concise: exactly 2 to 3 engaging, spoken sentences (under 50 words) suitable for real-time speech synthesis.
-• Use the search_artifacts tool to locate relevant photos, speeches, or articles from the museum collection.
-• Do not invent related speeches, books, locations, dates, source URLs, or audio; the UI cards come only from structured exhibit source data.
-• When citing an exhibit from search results, mention it naturally (in Hindi: e.g. "प्रदर्शनी की इस ऐतिहासिक तस्वीर में देखिए...", in English: e.g. "Notice the archival photo...").
+• Answer using the retrieved archival evidence below; do not rely on unsupported general knowledge when relevant evidence exists.
+• Use only sources that directly address the question. Prefer relevant books and collected writings, then relevant speech/interview transcripts, then exhibit records and media metadata. Relevance comes before source type.
+• Whisper transcripts and informal Hindi/Hinglish may contain recognition errors. Interpret the visitor's intent before deciding that no archive source exists.
+• If the supplied passages do not directly answer the question, call search_artifacts with concise, corrected or expanded archive queries before replying. You may make several sequential searches.
+• If the archive evidence does not establish an answer, say so briefly instead of guessing.
+• You may quote only a short, exact passage copied from the retrieved evidence. Never invent a quotation or put a paraphrase in quotation marks.
 • Never use markdown bolding, asterisks, bullet points, or lists — plain spoken sentences only.
 • In English: always write out years as spoken words (e.g. write "nineteen twenty-seven" instead of "1927", "nineteen fifty-six" instead of "1956").
 • In Hindi: write years and numbers naturally in Devanagari words or numerals (e.g. "उन्नीस सौ सत्ताईस" or "1927").
 """
+
+ARCHIVE_RELEVANCE_DISTANCE = 0.60
+ARCHIVE_RESULT_COUNT = 5
+ARCHIVE_MAX_SEARCH_QUERIES = 4
+ARCHIVE_MAX_PROMPT_CHUNKS = 5
 
 # ── Tool definition for the LLM ───────────────────────────────────
 TOOLS = [
@@ -168,6 +179,13 @@ HINDI_KEYWORD_MAP = {
     "बचपन": "childhood early life Satara young Bhimrao 1901",
     "जन्म": "birth 1891 Mhow Madhya Pradesh early life",
     "शिक्षा": "education Columbia University London School Economics",
+    "पढ़ाई": "Ambedkar higher education Columbia University London School Economics",
+    "पढाई": "Ambedkar higher education Columbia University London School Economics",
+    "पढ़ाई खत्म": "Ambedkar completed higher education Columbia University London School Economics",
+    "कहां": "Ambedkar education where studied Columbia University London School Economics",
+    "कहाँ": "Ambedkar education where studied Columbia University London School Economics",
+    "कहां पे": "Ambedkar education where studied Columbia University London School Economics",
+    "कहाँ पे": "Ambedkar education where studied Columbia University London School Economics",
     "कोलंबिया": "Columbia University New York 1914 education",
     "लंदन": "London School Economics Gray's Inn",
     "भाषण": "speech Round Table Conference Annihilation of Caste",
@@ -175,53 +193,312 @@ HINDI_KEYWORD_MAP = {
     "अंबेडकर": "Ambedkar biography life legacy",
 }
 
+HINDI_ANSWER_KEYWORD_MAP = {
+    "कोलंबिया": "Columbia University",
+    "विश्वविद्यालय": "University",
+    "न्यूयॉर्क": "New York",
+    "लंदन": "London",
+    "इकोनॉमिक्स": "Economics",
+    "अर्थशास्त्र": "Economics",
+    "ग्रे": "Gray",
+    "इन": "Inn",
+}
+
+
+def normalize_archive_queries(query: str) -> list[str]:
+    """Keep the visitor's wording while adding concise corrections and archive terms."""
+    normalized = unicodedata.normalize("NFKC", query or "")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    corrected = re.sub(
+        r"\byear\s+a\s+mid[- ]?care\b|\ba\s+mid[- ]?care\b",
+        "Ambedkar",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+
+    variants: list[str] = []
+
+    def add(value: str) -> None:
+        value = re.sub(r"\s+", " ", value).strip()
+        if value and value.casefold() not in {item.casefold() for item in variants}:
+            variants.append(value)
+
+    add(query)
+    add(normalized)
+    add(corrected)
+
+    folded = f"{normalized} {corrected}".casefold()
+    mapped_terms = list(dict.fromkeys(
+        value for phrase, value in HINDI_KEYWORD_MAP.items()
+        if phrase.casefold() in folded
+    ))
+    if re.search(r"\b(padhai|padhaai|parhai|kahan|kaha)\b", folded):
+        mapped_terms.append("Ambedkar education Columbia University London School of Economics")
+    if mapped_terms:
+        add(" ".join(mapped_terms))
+
+    education_query = re.search(
+        r"\b(education|educated|stud\w*|school|university|college|degree|padhai|padhaai|parhai)\b",
+        folded,
+    ) or any("education" in value.casefold() for value in mapped_terms)
+    if education_query:
+        add("Ambedkar higher education Columbia University New York London School of Economics")
+    if re.search(r"\b(rupee|currency|monetary|exchange)\b|problem of the rupee", folded):
+        add("The Problem of the Rupee Ambedkar currency rupee gold silver monetary policy")
+    if re.search(r"\b(buddha|dhamma|buddhism)\b", folded):
+        add("The Buddha and His Dhamma Ambedkar Buddha Dhamma Buddhism")
+    if re.search(r"\b(constitution|drafting|draft|assembly)\b|संविधान", folded):
+        add("Ambedkar Constitution drafting Drafting Committee Constituent Assembly")
+
+    return variants[:ARCHIVE_MAX_SEARCH_QUERIES]
+
 
 # ── search_artifacts implementation ────────────────────────────────
 def search_artifacts(query: str) -> dict:
     """Query ChromaDB and return structured results with Hindi-to-English expansion."""
     if collection is None:
-        return {"text_chunks": [], "images": [], "articles": [], "artifact_ids": []}
+        return {"text_chunks": [], "images": [], "articles": [], "sources": []}
 
     # Expand query if it contains known Hindi terms so English embeddings match accurately
     expanded_terms = [v for k, v in HINDI_KEYWORD_MAP.items() if k in query]
     search_query = f"{query} {' '.join(expanded_terms)}".strip() if expanded_terms else query
 
-    results = collection.query(query_texts=[search_query], n_results=3)
+    result_count = min(ARCHIVE_RESULT_COUNT, collection.count())
+    if not result_count:
+        return {"text_chunks": [], "images": [], "articles": [], "sources": []}
+
+    results = collection.query(
+        query_texts=[search_query],
+        n_results=result_count,
+        include=["documents", "metadatas", "distances"],
+    )
 
     text_chunks = []
     images = []
     articles = []
-    artifact_ids = []
+    sources = []
 
     for i, doc in enumerate(results["documents"][0]):
         meta = results["metadatas"][0][i] if results["metadatas"] else {}
+        distance = results["distances"][0][i] if results["distances"] else None
+        if distance is not None and distance > ARCHIVE_RELEVANCE_DISTANCE:
+            continue
+
         doc_type = meta.get("type", "text")
         topic = meta.get("topic", "")
-        artifact_identifier = meta.get("artifact_id")
-        if artifact_identifier and artifact_identifier not in artifact_ids:
-            artifact_ids.append(artifact_identifier)
+        record_id = results["ids"][0][i]
+        source = {
+            "record_id": record_id,
+            "type": doc_type,
+            "title": meta.get("document_title") or topic.replace("_", " ").title(),
+            "source_file": meta.get("source_file"),
+            "source_path": meta.get("source_path"),
+            "page_number": meta.get("page_number"),
+            "speaker": meta.get("speaker"),
+            "timestamp": meta.get("timestamp"),
+            "source_url": meta.get("source_url") or meta.get("url"),
+            "excerpt": doc[:280].strip(),
+            "distance": distance,
+        }
 
-        text_chunks.append({"text": doc, "type": doc_type, "topic": topic})
+        text_chunks.append({
+            "record_id": record_id,
+            "text": doc,
+            "type": doc_type,
+            "topic": topic,
+            "source": source,
+        })
+        sources.append(source)
 
         if doc_type == "photo" and meta.get("image_url"):
             images.append({
+                "record_id": record_id,
                 "url": meta["image_url"],
                 "title": topic.replace("_", " ").title(),
                 "caption": doc[:120],
             })
         if doc_type == "article" and meta.get("url"):
             articles.append({
+                "record_id": record_id,
                 "url": meta["url"],
                 "title": topic.replace("_", " ").title(),
                 "caption": doc[:120],
             })
 
-    return {
-        "text_chunks": text_chunks,
-        "images": images,
-        "articles": articles,
-        "artifact_ids": artifact_ids,
+    return {"text_chunks": text_chunks, "images": images, "articles": articles, "sources": sources}
+
+
+def _format_archive_evidence(text_chunks: list[dict]) -> str:
+    if not text_chunks:
+        return "No sufficiently relevant archival passage was retrieved. Do not answer from memory."
+
+    passages = []
+    for index, chunk in enumerate(text_chunks[:ARCHIVE_MAX_PROMPT_CHUNKS], start=1):
+        source = chunk.get("source") or {}
+        details = [
+            f"Record ID: {source.get('record_id') or chunk.get('record_id', '')}",
+            f"Type: {source.get('type') or chunk.get('type', '')}",
+            f"Title: {source.get('title') or chunk.get('topic', '')}",
+        ]
+        if source.get("source_file") or source.get("source_path"):
+            details.append(f"File: {source.get('source_file') or source.get('source_path')}")
+        if source.get("page_number") is not None:
+            details.append(f"Page: {source['page_number']}")
+        if source.get("speaker"):
+            details.append(f"Speaker: {source['speaker']}")
+        if source.get("timestamp"):
+            details.append(f"Timestamp: {source['timestamp']}")
+        passages.append(
+            f"[Source {index}; {'; '.join(details)}]\n{chunk.get('text', '')[:700]}"
+        )
+    return "Retrieved archival evidence (use only passages relevant to the question):\n\n" + "\n\n".join(passages)
+
+
+def _remove_unverified_quotes(answer: str, evidence_texts: list[str]) -> str:
+    normalized_sources = [re.sub(r"\s+", " ", text) for text in evidence_texts]
+    quote_pattern = re.compile(r'"([^"\n]+)"|“([^”\n]+)”|‘([^’\n]+)’|(?<!\w)\'([^\'\n]+)\'(?!\w)')
+
+    def keep_only_verbatim_quotes(match: re.Match) -> str:
+        quoted_text = next((group for group in match.groups() if group is not None), "")
+        normalized_quote = re.sub(r"\s+", " ", quoted_text)
+        if normalized_quote and any(normalized_quote in source for source in normalized_sources):
+            return match.group(0)
+        return quoted_text
+
+    return quote_pattern.sub(keep_only_verbatim_quotes, answer)
+
+
+def _select_supporting_sources(
+    question: str,
+    answer: str,
+    sources: list[dict],
+    evidence_chunks: list[dict],
+    query_context: str = "",
+) -> list[dict]:
+    stop_words = {
+        "about", "after", "also", "ambedkar", "and", "are", "been", "before",
+        "being", "between", "both", "could", "did", "does", "from", "have",
+        "here", "higher", "his", "into", "just", "more", "most", "new", "only", "other", "over",
+        "that", "their", "them", "then", "there", "these", "they", "this", "those",
+        "through", "under", "very", "what", "when", "where", "which", "while",
+        "with", "would", "your", "about", "the", "was", "were", "will", "would",
     }
+
+    def terms(value: str) -> set[str]:
+        return {
+            word for word in re.findall(r"[a-z0-9]+", value.lower())
+            if len(word) > 2 and word not in stop_words
+        }
+
+    answer_context = answer
+    if is_hindi_text(answer):
+        answer_context += " " + " ".join(
+            english for hindi, english in HINDI_ANSWER_KEYWORD_MAP.items()
+            if hindi in answer
+        )
+    answer_terms = terms(answer_context)
+    question_terms = terms(f"{question} {query_context}")
+    if not answer_terms:
+        answer_terms |= question_terms
+
+    text_by_id = {
+        chunk.get("record_id"): chunk.get("text", "")
+        for chunk in evidence_chunks
+        if chunk.get("record_id")
+    }
+    supporting = []
+    for source in sources:
+        source_id = source.get("record_id")
+        source_text = text_by_id.get(source_id, "")
+        source_terms = terms(source_text)
+        answer_overlap = len(answer_terms & source_terms)
+        minimum_overlap = 2 if is_hindi_text(answer) else 3
+        if answer_overlap >= minimum_overlap:
+            supporting.append((source, answer_overlap))
+    priorities = {
+        "book": 0,
+        "speech": 1,
+        "interview": 2,
+        "exhibit_context": 3,
+        "article": 4,
+        "biography": 4,
+        "photo": 5,
+    }
+    supporting.sort(key=lambda item: (
+        priorities.get(item[0].get("type", ""), 4),
+        -item[1],
+        item[0].get("distance", 1.0),
+    ))
+    return [source for source, _ in supporting[:4]]
+
+
+def _best_fallback_chunk(
+    question: str,
+    search_queries: list[str],
+    evidence_chunks: list[dict],
+) -> dict | None:
+    if not evidence_chunks:
+        return None
+    stop_words = {
+        "about", "after", "also", "ambedkar", "and", "are", "been", "before",
+        "being", "between", "both", "could", "did", "does", "from", "have",
+        "here", "higher", "his", "into", "just", "more", "most", "new", "only",
+        "other", "over", "that", "their", "them", "then", "there", "these",
+        "they", "this", "those", "through", "under", "very", "what", "when",
+        "where", "which", "while", "with", "would", "your", "the", "was", "were",
+    }
+    query_terms = {
+        word for word in re.findall(r"[a-z0-9]+", f"{question} {' '.join(search_queries)}".lower())
+        if len(word) > 2 and word not in stop_words
+    }
+    return max(
+        evidence_chunks,
+        key=lambda chunk: (
+            len(query_terms & {
+                word for word in re.findall(r"[a-z0-9]+", chunk.get("text", "").lower())
+                if len(word) > 2 and word not in stop_words
+            }),
+            -(chunk.get("source") or {}).get("distance", 1.0),
+        ),
+    )
+
+
+def _has_relevant_archive_context(
+    question: str,
+    search_queries: list[str],
+    evidence_chunks: list[dict],
+) -> bool:
+    stop_words = {
+        "about", "after", "also", "ambedkar", "and", "are", "been", "before",
+        "being", "between", "both", "could", "did", "does", "from", "have",
+        "here", "higher", "his", "into", "just", "more", "most", "new", "only",
+        "other", "over", "that", "their", "them", "then", "there", "these",
+        "they", "this", "those", "through", "under", "very", "what", "when",
+        "where", "which", "while", "with", "would", "your", "the", "was", "were",
+    }
+    query_terms = {
+        word for word in re.findall(r"[a-z0-9]+", f"{question} {' '.join(search_queries)}".lower())
+        if len(word) > 2 and word not in stop_words
+    }
+    for chunk in evidence_chunks:
+        chunk_terms = {
+            word for word in re.findall(
+                r"[a-z0-9]+",
+                f"{chunk.get('topic', '')} {chunk.get('text', '')}".lower(),
+            )
+            if len(word) > 2 and word not in stop_words
+        }
+        if len(query_terms & chunk_terms) >= 2:
+            return True
+        distance = (chunk.get("source") or {}).get("distance")
+        if distance is not None and distance <= 0.32:
+            return True
+    return False
+
+
+def _filter_artifacts_to_sources(artifacts: list[dict], sources: list[dict]) -> list[dict]:
+    source_ids = {source.get("record_id") for source in sources}
+    return [artifact for artifact in artifacts if artifact.get("record_id") in source_ids]
 
 
 # ── Synthetic audio fallback generator (used only if Groq API fails) ─
@@ -328,31 +605,139 @@ async def transcribe(audio_bytes: bytes, filename: str) -> str:
 
 
 # ── Step 2 & 3: Chat with sequential tool-calling ─────────────────
-async def chat_with_tools(transcript: str) -> tuple[str, list[dict], dict[str, list[dict]]]:
+async def chat_with_tools(transcript: str) -> tuple[str, list[dict], list[dict]]:
     """
-    Send transcript to openai/gpt-oss-120b with search_artifacts tool.
-    Handles sequential tool_calls, feeds results back, returns final text + artifacts.
+    Search raw, normalized, and expanded queries before deciding whether evidence exists.
     """
+    archive_search_queries = normalize_archive_queries(transcript)
+    collected_artifacts: list[dict] = []
+    collected_sources: list[dict] = []
+    evidence_texts: list[str] = []
+    evidence_chunks: list[dict] = []
+    seen_source_ids: set[str] = set()
+    seen_chunk_ids: set[str] = set()
+    seen_artifacts: set[tuple[str, str]] = set()
+
+    def collect_results(results: dict) -> None:
+        for chunk in results.get("text_chunks", []):
+            chunk_id = chunk.get("record_id") or ""
+            if chunk.get("text") and chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id)
+                evidence_texts.append(chunk["text"])
+                evidence_chunks.append(chunk)
+        for source in results.get("sources", []):
+            record_id = source.get("record_id") or ""
+            if record_id and record_id not in seen_source_ids:
+                seen_source_ids.add(record_id)
+                collected_sources.append(source)
+        for artifact_type, key in (("photo", "images"), ("article", "articles")):
+            for item in results.get(key, []):
+                identity = (artifact_type, item.get("url", ""))
+                if identity not in seen_artifacts:
+                    seen_artifacts.add(identity)
+                    collected_artifacts.append({"type": artifact_type, **item})
+
+    for search_query in archive_search_queries:
+        collect_results(search_artifacts(search_query))
+    stop_words = {
+        "about", "after", "also", "ambedkar", "and", "are", "been", "before",
+        "being", "between", "both", "could", "did", "does", "from", "have",
+        "here", "higher", "his", "into", "just", "more", "most", "new", "only",
+        "other", "over", "that", "their", "them", "then", "there", "these",
+        "they", "this", "those", "through", "under", "very", "what", "when",
+        "where", "which", "while", "with", "would", "your", "the", "was", "were",
+    }
+    search_terms = {
+        word for word in re.findall(r"[a-z0-9]+", f"{transcript} {' '.join(archive_search_queries)}".lower())
+        if len(word) > 2 and word not in stop_words
+    }
+    evidence_chunks.sort(key=lambda chunk: (
+        -len(search_terms & {
+            word for word in re.findall(
+                r"[a-z0-9]+",
+                f"{chunk.get('topic', '')} {chunk.get('text', '')}".lower(),
+            )
+            if len(word) > 2 and word not in stop_words
+        }),
+        (chunk.get("source") or {}).get("distance", 1.0),
+    ))
+    evidence_texts[:] = [chunk["text"] for chunk in evidence_chunks]
+    initial_results = {"text_chunks": evidence_chunks}
+    log.info("Retrieved archive record IDs: %s", sorted(seen_source_ids))
+
+    def finalize_answer(
+        answer: str,
+        preferred_source_ids: set[str] | None = None,
+    ) -> tuple[str, list[dict], list[dict]]:
+        if not _has_relevant_archive_context(transcript, archive_search_queries, evidence_chunks):
+            if is_hindi_text(transcript):
+                no_source_answer = "उपलब्ध अभिलेखागार में इस प्रश्न का उत्तर देने वाला प्रासंगिक स्रोत नहीं मिला।"
+            else:
+                no_source_answer = "I couldn't find a sufficiently relevant archive source for that question yet."
+            return no_source_answer, [], []
+
+        grounded_answer = _remove_unverified_quotes(answer, evidence_texts)
+        supporting_sources = _select_supporting_sources(
+            transcript,
+            grounded_answer,
+            collected_sources,
+            evidence_chunks,
+            " ".join(archive_search_queries),
+        )
+        if preferred_source_ids is not None:
+            supporting_sources = [
+                source for source in supporting_sources
+                if source.get("record_id") in preferred_source_ids
+            ]
+        if not supporting_sources:
+            fallback_chunk = next(
+                (chunk for chunk in evidence_chunks if chunk.get("record_id") in (preferred_source_ids or set())),
+                None,
+            ) if preferred_source_ids is not None else _best_fallback_chunk(
+                transcript, archive_search_queries, evidence_chunks
+            )
+            fallback_id = fallback_chunk.get("record_id") if fallback_chunk else None
+            fallback_source = next(
+                (source for source in collected_sources if source.get("record_id") == fallback_id),
+                None,
+            )
+            if fallback_chunk and fallback_source:
+                grounded_answer = fallback_chunk.get("text", "")[:700]
+                supporting_sources = [fallback_source]
+            else:
+                if is_hindi_text(transcript):
+                    no_source_answer = "उपलब्ध अभिलेखागार में इस प्रश्न का उत्तर देने वाला प्रासंगिक स्रोत नहीं मिला।"
+                else:
+                    no_source_answer = "I couldn't find a sufficiently relevant archive source for that question yet."
+                return no_source_answer, [], []
+        supporting_ids = {source.get("record_id") for source in supporting_sources}
+        supporting_texts = [
+            chunk["text"] for chunk in evidence_chunks
+            if chunk.get("record_id") in supporting_ids
+        ]
+        grounded_answer = _remove_unverified_quotes(grounded_answer, supporting_texts)
+        return (
+            grounded_answer,
+            _filter_artifacts_to_sources(collected_artifacts, supporting_sources),
+            supporting_sources,
+        )
+
+    def grounded_fallback_answer() -> tuple[str, set[str]]:
+        chunk = _best_fallback_chunk(transcript, archive_search_queries, evidence_chunks)
+        if not chunk:
+            return "", set()
+        return chunk.get("text", "")[:700], {chunk.get("record_id", "")}
+
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key or key.startswith("gsk_YOUR_KEY"):
-        # Fallback RAG if no key provided
-        res = search_artifacts(transcript)
-        artifacts = []
-        for img in res.get("images", []):
-            artifacts.append({"type": "photo", "title": img["title"], "url": img["url"], "caption": img["caption"]})
-        for art in res.get("articles", []):
-            artifacts.append({"type": "article", "title": art["title"], "url": art["url"], "caption": art["caption"]})
-        chunks = res.get("text_chunks", [])
-        ans = chunks[0]["text"] if chunks else "Dr. B.R. Ambedkar was the chief architect of the Indian Constitution."
-        return ans, artifacts, related_content_for_artifacts(res.get("artifact_ids", []))
+        fallback_text, fallback_ids = grounded_fallback_answer()
+        return finalize_answer(fallback_text, fallback_ids)
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nSearch queries already tried: {archive_search_queries}\n\n{_format_archive_evidence(initial_results.get('text_chunks', []))}"},
         {"role": "user", "content": transcript},
     ]
-    collected_artifacts = []
-    collected_artifact_ids = []
-    max_rounds = 4
+    max_rounds = 5
 
     client = get_shared_client()
     for _ in range(max_rounds):
@@ -391,24 +776,13 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict], dict[str, l
                 log.info(f"Sequential tool call: {fn_name}({fn_args})")
 
                 if fn_name == "search_artifacts":
-                    result = search_artifacts(fn_args.get("query", transcript))
-                    for identifier in result.get("artifact_ids", []):
-                        if identifier not in collected_artifact_ids:
-                            collected_artifact_ids.append(identifier)
-                    for img in result.get("images", []):
-                        collected_artifacts.append({
-                            "type": "photo",
-                            "title": img["title"],
-                            "url": img["url"],
-                            "caption": img["caption"],
-                        })
-                    for art in result.get("articles", []):
-                        collected_artifacts.append({
-                            "type": "article",
-                            "title": art["title"],
-                            "url": art["url"],
-                            "caption": art["caption"],
-                        })
+                    search_query = fn_args.get("query")
+                    if not isinstance(search_query, str) or not search_query.strip():
+                        search_query = transcript
+                    archive_search_queries.extend(normalize_archive_queries(search_query))
+                    archive_search_queries = list(dict.fromkeys(archive_search_queries))[:ARCHIVE_MAX_SEARCH_QUERIES * 2]
+                    result = search_artifacts(search_query)
+                    collect_results(result)
                 else:
                     result = {"error": f"Unknown tool: {fn_name}"}
 
@@ -421,27 +795,14 @@ async def chat_with_tools(transcript: str) -> tuple[str, list[dict], dict[str, l
 
         answer = msg.get("content", "") or ""
         if answer.strip():
-            return (
-                answer.strip(),
-                collected_artifacts,
-                related_content_for_artifacts(collected_artifact_ids),
-            )
+            return finalize_answer(answer.strip())
 
         # If model returned no tool calls and empty content, nudge it once to reply
         messages.append({"role": "user", "content": "Please provide your concise voice tour guide response in the requested language."})
 
     # Fallback if rounds exhausted or empty
-    res = search_artifacts(transcript)
-    for img in res.get("images", []):
-        collected_artifacts.append({"type": "photo", "title": img["title"], "url": img["url"], "caption": img["caption"]})
-    for art in res.get("articles", []):
-        collected_artifacts.append({"type": "article", "title": art["title"], "url": art["url"], "caption": art["caption"]})
-    chunks = res.get("text_chunks", [])
-    if is_hindi_text(transcript):
-        ans = "डॉक्टर भीमराव अंबेडकर भारतीय संविधान के मुख्य वास्तुकार और महान समाज सुधारक थे।"
-    else:
-        ans = chunks[0]["text"] if chunks else "Dr. B.R. Ambedkar was a profound jurist, economist, and social reformer."
-    return ans, collected_artifacts, related_content_for_artifacts(res.get("artifact_ids", []))
+    fallback_text, fallback_ids = grounded_fallback_answer()
+    return finalize_answer(fallback_text, fallback_ids)
 
 
 # ── Exhibit-scoped chat (artifact context, no Chroma tools) ───────
@@ -726,13 +1087,12 @@ async def converse(
             "text": "I didn't catch that. Could you please tap and ask again?",
             "transcript": "",
             "artifacts": [],
-            **related_content_for_artifacts([]),
         })
 
     log.info(f"Active Query/Transcript: {transcript}")
 
     # 2 & 3. Chat + sequential tool calls with ChromaDB
-    answer_text, artifacts, related = await chat_with_tools(transcript)
+    answer_text, artifacts, archive_sources = await chat_with_tools(transcript)
     log.info(f"Tour Guide Answer: {answer_text[:120]}…")
 
     # 4. Synthesise speech via Orpheus TTS
@@ -744,7 +1104,7 @@ async def converse(
         "text": answer_text,
         "transcript": transcript,
         "artifacts": artifacts,
-        **related,
+        "archive_sources": archive_sources,
     })
 
 
@@ -805,7 +1165,6 @@ async def converse_artifact(
             "audio_url": None,
             "text": "I didn't catch that. Could you please tap and ask again?",
             "transcript": "",
-            **related_content(qr_id),
         })
 
     log.info(f"Artifact converse [{qr_id}]: {transcript}")
@@ -816,7 +1175,6 @@ async def converse_artifact(
         "audio_url": audio_url,
         "text": answer_text,
         "transcript": transcript,
-        **related_content(qr_id),
     })
 
 
@@ -831,20 +1189,6 @@ async def serve_exhibit():
     return FileResponse(str(FRONTEND_DIR / "exhibit.html"))
 
 
-@app.get("/{section}")
-async def serve_kiosk_section(section: str):
-    if section not in {"exhibits", "books", "speeches", "interviews", "media", "assistant"}:
-        raise HTTPException(status_code=404, detail="Page not found")
-    return FileResponse(str(FRONTEND_DIR / "index.html"))
-
-
-@app.get("/{section}/{item_id}")
-async def serve_kiosk_detail(section: str, item_id: str):
-    if section not in {"exhibits", "books", "speeches", "interviews"} or not item_id:
-        raise HTTPException(status_code=404, detail="Page not found")
-    return FileResponse(str(FRONTEND_DIR / "index.html"))
-
-
 # ── Health check ────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
@@ -853,6 +1197,21 @@ async def health():
         "chroma_docs": collection.count() if collection else 0,
         "groq_key_set": bool(GROQ_API_KEY),
     }
+
+
+@app.get("/{spa_path:path}")
+async def serve_kiosk_route(spa_path: str):
+    """Serve the existing kiosk SPA for its client-side collection routes."""
+    parts = [part for part in spa_path.split("/") if part]
+    collections = {"exhibits", "books", "speeches", "interviews"}
+    valid_route = (
+        len(parts) == 1 and parts[0] in {*collections, "media", "assistant"}
+    ) or (
+        len(parts) == 2 and parts[0] in collections
+    )
+    if not valid_route:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
 # ── Cleanup ─────────────────────────────────────────────────────────
