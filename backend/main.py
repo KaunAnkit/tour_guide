@@ -831,6 +831,20 @@ async def serve_exhibit():
     return FileResponse(str(FRONTEND_DIR / "exhibit.html"))
 
 
+@app.get("/{section}")
+async def serve_kiosk_section(section: str):
+    if section not in {"exhibits", "books", "speeches", "interviews", "media", "assistant"}:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+@app.get("/{section}/{item_id}")
+async def serve_kiosk_detail(section: str, item_id: str):
+    if section not in {"exhibits", "books", "speeches", "interviews"} or not item_id:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
 # ── Health check ────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
