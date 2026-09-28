@@ -903,6 +903,13 @@ button, input, textarea, select {
   pointer-events: none;
 }
 
+.error-toast.development-toast {
+  z-index: 110;
+  max-width: min(92vw, 620px);
+  text-align: center;
+  line-height: 1.45;
+}
+
 .error-toast.out {
   animation: toastOut 0.25s var(--ease-smooth) forwards;
 }

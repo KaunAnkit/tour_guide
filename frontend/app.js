@@ -58,6 +58,10 @@
   let assistantContextId = '';
   let kioskRequestVersion = 0;
   let kioskLanguage = 'en';
+  let developmentToast = null;
+  let developmentToastOutTimer = null;
+  let developmentToastRemoveTimer = null;
+  const DEVELOPMENT_NOTICE = 'Demo prototype of how kiosks would work with backend (still in development).';
 
   const kioskTranslations = {
     en: {
@@ -163,7 +167,10 @@
       const [, kind, id] = detailMatch;
       const item = getContentItem(kind, id);
       detailPage.hidden = false;
-      if (item) renderDetailPage(kind, item);
+      if (item) {
+        renderDetailPage(kind, item);
+        if ((kind === 'speeches' || kind === 'interviews') && !item.transcript && !item.segments?.length) showToast();
+      }
       else renderNotFound(pathname);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -184,6 +191,7 @@
     } else {
       document.getElementById('assistant-context').hidden = true;
     }
+    if (viewId === 'speeches' && !KIOSK_CONTENT.speeches.length) showToast();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -367,7 +375,10 @@
       if (readUrl) {
         read.href = readUrl;
         if (!localFile) { read.target = '_blank'; read.rel = 'noopener noreferrer'; }
-      } else { read.type = 'button'; read.disabled = true; }
+      } else {
+        read.type = 'button';
+        read.addEventListener('click', showToast);
+      }
       actions.appendChild(read);
       if (localFile && source) {
         const sourceLink = makeKioskElement('a', 'detail-source-link', 'OPEN SOURCE ↗');
@@ -376,12 +387,20 @@
         sourceLink.rel = 'noopener noreferrer';
         actions.appendChild(sourceLink);
       }
+      const textFile = safeResourceUrl(item.textFile || '');
+      if (textFile) {
+        const textLink = makeKioskElement('a', 'detail-source-link', 'OPEN TEXT VERSION ↗');
+        textLink.href = textFile;
+        textLink.target = '_blank';
+        textLink.rel = 'noopener noreferrer';
+        actions.appendChild(textLink);
+      }
     } else if (kind === 'speeches' || kind === 'interviews') {
       const mediaUrl = safeResourceUrl(item.video || item.audio || '');
       const play = makeKioskElement(mediaUrl ? 'button' : 'button', 'button-primary', mediaUrl ? 'PLAY' : 'RECORDING PENDING');
       play.type = 'button';
-      play.disabled = !mediaUrl;
       if (mediaUrl) play.addEventListener('click', () => openRoutedMedia(item, mediaUrl));
+      else play.addEventListener('click', showToast);
       actions.appendChild(play);
     }
     const ask = makeKioskElement('a', 'button-secondary', `ASK ABOUT THIS ${kind === 'books' ? 'BOOK' : kind === 'exhibits' ? 'EXHIBIT' : 'TOPIC'}`);
@@ -632,13 +651,24 @@
       }
     }
 
-  function showToast(msg) {
-    const t = document.createElement('div');
-    t.className = 'error-toast';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(() => { t.classList.add('out'); }, 3000);
-    setTimeout(() => { t.remove(); }, 3400);
+  function showToast() {
+    if (!developmentToast) {
+      developmentToast = document.createElement('div');
+      developmentToast.id = 'development-toast';
+      developmentToast.className = 'error-toast development-toast';
+      developmentToast.setAttribute('role', 'status');
+      developmentToast.setAttribute('aria-live', 'polite');
+    }
+    clearTimeout(developmentToastOutTimer);
+    clearTimeout(developmentToastRemoveTimer);
+    developmentToast.textContent = DEVELOPMENT_NOTICE;
+    developmentToast.classList.remove('out');
+    if (!developmentToast.isConnected) document.body.appendChild(developmentToast);
+    developmentToastOutTimer = setTimeout(() => developmentToast?.classList.add('out'), 2600);
+    developmentToastRemoveTimer = setTimeout(() => {
+      developmentToast?.remove();
+      developmentToast = null;
+    }, 2900);
   }
 
   /* ===== Real-time Orb Pulsing (Web Audio AnalyserNode) ===== */
@@ -714,7 +744,7 @@
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
       console.warn('Microphone error or permission denied:', e);
-      showToast('Microphone access unavailable — using prompt chips');
+      showToast();
       return;
     }
 
@@ -819,7 +849,7 @@
     } catch (err) {
       if (requestVersion !== kioskRequestVersion) return;
       console.error('Converse request failed:', err);
-      showToast('Guide communication error — please try again');
+      showToast();
       kioskAnswer.hidden = false;
       kioskQuestion.textContent = userTextEl.textContent || 'Your question';
       kioskAnswerCopy.textContent = 'The archive could not be reached. Please try again.';
@@ -1050,7 +1080,8 @@
         cover.innerHTML = '<span>BOOK COVER</span><i></i><small>SOURCE LINK<br />PENDING</small>';
       }
       const body = makeKioskElement('div', 'book-record-copy');
-      body.append(makeKioskElement('span', 'record-index', `RECORD 0${index + 1}`), makeKioskElement('h3', '', book.title), makeKioskElement('p', 'record-author', book.author));
+      body.append(makeKioskElement('span', 'record-index', `RECORD 0${index + 1}`), makeKioskElement('h3', '', book.title));
+      if (book.author) body.appendChild(makeKioskElement('p', 'record-author', book.author));
       if (book.year) body.appendChild(makeKioskElement('p', 'record-meta', book.year));
       body.appendChild(makeKioskElement('p', 'record-description', book.description));
       const action = makeKioskElement('a', 'record-action', 'BOOK DETAILS ↗');
@@ -1192,7 +1223,7 @@
     if (localGroups) kioskRelated.appendChild(localGroups);
 
     const backendItems = [
-      ...(data.artifacts || []).map((item) => ({ ...item, recordType: item.type || 'archive' })),
+      ...(data.archive_sources || data.artifacts || []).map((item) => ({ ...item, recordType: item.type || 'archive' })),
       ...(data.related_speeches || []).map((item) => ({ ...item, recordType: 'speech' })),
       ...(data.related_locations || []).map((item) => ({ ...item, recordType: 'location' })),
       ...(data.related_books || []).map((item) => ({ ...item, recordType: 'book' }))
@@ -1203,8 +1234,9 @@
       const cards = makeKioskElement('div', 'related-route-cards');
       backendItems.forEach((item) => {
         const record = makeKioskElement('article', 'related-record');
-        record.append(makeKioskElement('span', 'record-index', String(item.recordType).toUpperCase()), makeKioskElement('h3', '', item.title || item.name || item.city || 'Archive record'));
-        const description = item.summary || item.description || item.caption || [item.speaker, item.author, item.year, item.date, item.city].filter(Boolean).join(' · ');
+        record.append(makeKioskElement('span', 'record-index', String(item.recordType).replaceAll('_', ' ').toUpperCase()), makeKioskElement('h3', '', item.title || item.name || item.city || 'Archive record'));
+        const citation = [item.record_id ? `Record ${item.record_id}` : '', item.source_file || item.source_path, item.page_number != null ? `Page ${item.page_number}` : '', item.speaker, item.timestamp].filter(Boolean).join(' · ');
+        const description = [item.excerpt || item.summary || item.description || item.caption, citation].filter(Boolean).join(' · ');
         if (description) record.appendChild(makeKioskElement('p', 'related-record-description', description));
         const sourceUrl = safeExternalUrl(item.source_url);
         if (sourceUrl) {
@@ -1239,7 +1271,7 @@
     if (!value || typeof value !== 'string') return '';
     const external = safeExternalUrl(value);
     if (external) return external;
-    return /^(?:\/static\/|\.\/|\.\.\/)[^\s]*\.(?:pdf|mp4|webm|mp3|wav|ogg|m4a)(?:[?#].*)?$/i.test(value) ? value : '';
+    return /^(?:\/static\/|\/content\/|\.\/|\.\.\/)[^\s]*\.(?:pdf|txt|mp4|webm|mp3|wav|ogg|m4a)(?:[?#].*)?$/i.test(value) ? value : '';
   }
 
   function openImageViewer(image) {
@@ -1419,5 +1451,6 @@
 
   /* ===== Initial demo state ===== */
   setState('idle');
+  showToast();
 
 })();

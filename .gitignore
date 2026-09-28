@@ -3,3 +3,30 @@ backend\.env
 
 audio_cache/
 __pycache__/
+
+# Incomplete downloads and generated processing output; preserve source files.
+content/**/*.part
+content/**/*.tmp
+content/**/generated/
+content/**/processed/
+
+# Keep locally managed archival media out of ordinary Git commits.
+content/speeches/audio/*.mp3
+content/speeches/audio/*.wav
+content/speeches/audio/*.flac
+content/speeches/audio/*.ogg
+content/speeches/audio/*.m4a
+content/speeches/audio/*.aac
+content/speeches/audio/*.wma
+content/speeches/audio/*.aiff
+content/speeches/audio/*.opus
+content/speeches/video/*.mp4
+content/speeches/video/*.mkv
+content/speeches/video/*.mov
+content/speeches/video/*.avi
+content/speeches/video/*.webm
+content/speeches/video/*.m4v
+content/speeches/video/*.mpeg
+content/speeches/video/*.mpg
+content/speeches/video/*.wmv
+content/speeches/video/*.3gp
