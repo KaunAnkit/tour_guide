@@ -1,0 +1,62 @@
+window.KIOSK_BOOKS = [
+  {
+    id: 'annihilation-of-caste',
+    title: 'Annihilation of Caste',
+    author: 'B. R. Ambedkar',
+    year: null,
+    cover: null,
+    description: 'A major work on caste and social reform. Edition, publication details and source are pending verification.',
+    url: null,
+    localFile: null,
+    topics: ['caste', 'social justice', 'equality'],
+    keywords: ['reform', 'social change', 'discrimination'],
+    people: ['B. R. Ambedkar'],
+    places: ['India'],
+    events: []
+  },
+  {
+    id: 'problem-of-the-rupee',
+    title: 'The Problem of the Rupee',
+    author: 'B. R. Ambedkar',
+    year: null,
+    cover: null,
+    description: 'A work on currency and monetary policy. Edition and source details are pending verification.',
+    url: null,
+    localFile: null,
+    topics: ['economics', 'currency', 'labour'],
+    keywords: ['rupee', 'monetary policy', 'finance'],
+    people: ['B. R. Ambedkar'],
+    places: ['India', 'London'],
+    events: []
+  },
+  {
+    id: 'states-and-minorities',
+    title: 'States and Minorities',
+    author: 'B. R. Ambedkar',
+    year: null,
+    cover: null,
+    description: 'A proposal on constitutional safeguards and economic rights. Edition and source details are pending verification.',
+    url: null,
+    localFile: null,
+    topics: ['constitution', 'social justice', 'equality'],
+    keywords: ['minority rights', 'safeguards', 'representation', 'economic rights'],
+    people: ['B. R. Ambedkar'],
+    places: ['India'],
+    events: ['Constitution drafting']
+  },
+  {
+    id: 'buddha-and-his-dhamma',
+    title: 'The Buddha and His Dhamma',
+    author: 'B. R. Ambedkar',
+    year: null,
+    cover: null,
+    description: 'A work on Buddhism by Dr. Ambedkar. Edition and source details are pending verification.',
+    url: null,
+    localFile: null,
+    topics: ['Buddhism', 'equality', 'social justice'],
+    keywords: ['Dhamma', 'conversion', 'religion'],
+    people: ['B. R. Ambedkar'],
+    places: ['Nagpur'],
+    events: ['Deeksha Bhoomi']
+  }
+];

@@ -7,10 +7,123 @@
   <meta name="description" content="Interactive voice-guided tour of the Dr Ambedkar National Memorial. Ask questions about Ambedkar's life, speeches, and legacy." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Serif+Devanagari:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
+  <div id="kiosk">
+    <header class="kiosk-header">
+      <a class="kiosk-brand" href="/" data-route aria-label="Dr. B. R. Ambedkar National Memorial home">
+        <img src="/static/assets/brlogo.png" alt="" />
+        <span><strong>Dr. B. R. Ambedkar National Memorial</strong><small data-kcopy="guide">VOICE TOUR GUIDE</small></span>
+      </a>
+      <nav class="kiosk-nav" aria-label="Museum sections">
+        <a href="/exhibits" data-route data-kcopy="navExplore">EXPLORE</a><a href="/books" data-route data-kcopy="navBooks">BOOKS</a><a href="/speeches" data-route data-kcopy="navSpeeches">SPEECHES</a><a href="/interviews" data-route data-kcopy="navInterviews">INTERVIEWS</a><a href="/media" data-route data-kcopy="navMedia">MEDIA</a><a href="/assistant" data-route data-kcopy="navAsk">ASK</a>
+      </nav>
+      <div class="kiosk-header-actions">
+        <div class="kiosk-languages" aria-label="Choose language">
+          <button type="button" class="is-selected" data-language="en" aria-pressed="true">EN</button><span></span><button type="button" data-language="hi" aria-pressed="false">हिन्दी</button><span></span><button type="button" data-language="mr" aria-pressed="false">मराठी</button>
+        </div>
+        <button type="button" id="route-back" class="kiosk-home-button" hidden>← BACK</button>
+        <a href="/" data-route id="kiosk-home" class="kiosk-home-button" data-kcopy="home">HOME</a>
+      </div>
+    </header>
+
+    <main>
+      <section id="welcome" class="kiosk-hero">
+        <div class="kiosk-hero-copy">
+          <p class="section-kicker"><i></i><span data-kcopy="heroKicker">SEE · ASK · LISTEN · DISCOVER</span></p>
+          <h1 data-kcopy="heroTitle">Explore the Life<br />&amp; Legacy of<br /><em>Dr. B. R. Ambedkar</em></h1>
+          <p class="kiosk-hero-intro" data-kcopy="heroIntro">Explore exhibits, listen to speeches, discover books and ask questions.</p>
+          <div class="kiosk-hero-actions">
+            <a href="/assistant" data-route class="button-primary"><span class="button-mic-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></span><span data-kcopy="speak">TAP TO SPEAK</span></a>
+            <a href="/exhibits" data-route class="button-secondary"><span data-kcopy="explore">EXPLORE EXHIBITS</span><span>→</span></a>
+          </div>
+          <p class="kiosk-hero-caption" data-kcopy="heroCaption">A VOICE-GUIDED JOURNEY THROUGH HISTORY</p>
+        </div>
+        <div class="kiosk-hero-image">
+          <img class="hero-chakra" src="/static/assets/home/chakra.svg" alt="" />
+          <img src="/static/exhibits/young_ambedkar.jpg" alt="Archival portrait of Dr. B. R. Ambedkar" />
+          <div class="hero-image-caption"><span>1891 — 1956</span><span>A LIFE OF IDEAS AND ACTION</span></div>
+        </div>
+        <a class="hero-scroll-cue" href="/assistant" data-route aria-label="Open Ask the Guide">↓</a>
+      </section>
+
+      <section id="home-featured" class="home-featured kiosk-section" aria-label="Featured museum collections">
+        <div class="home-featured-heading"><p class="section-kicker">CONTINUE THROUGH THE MEMORIAL</p><a href="/assistant" data-route>ASK THE GUIDE <span>→</span></a></div>
+        <div id="home-featured-grid" class="home-featured-grid"></div>
+      </section>
+
+      <section id="ask" class="kiosk-section ask-section" hidden>
+        <div class="section-heading"><p class="section-kicker" data-kcopy="askKicker">01 / ASK</p><h2 data-kcopy="askTitle">Ask the Guide</h2><p data-kcopy="askIntro">Ask about Ambedkar's life, ideas, speeches, writings and legacy.</p></div>
+        <div id="assistant-context" class="assistant-context" hidden><small>CURRENT TOPIC</small><strong></strong></div>
+        <div class="ask-layout">
+          <div class="voice-station">
+            <div class="voice-halo"></div>
+            <button type="button" id="kiosk-mic" aria-label="Tap to speak"><span class="mic-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></span><strong id="kiosk-mic-label">TAP TO SPEAK</strong></button>
+            <p id="kiosk-voice-status" aria-live="polite">Ask naturally. Your question will be answered from the available archival knowledge.</p>
+          </div>
+          <div class="ask-prompts"><p class="mini-label" data-kcopy="promptHeading">QUESTIONS TO BEGIN WITH</p>
+            <button type="button" class="prompt-question" data-question="What did Ambedkar say about education?"><span data-kcopy="qEducation">What did Ambedkar say about education?</span><span>↗</span></button>
+            <button type="button" class="prompt-question" data-question="Why was the Mahad Satyagraha important?"><span data-kcopy="qMahad">Why was the Mahad Satyagraha important?</span><span>↗</span></button>
+            <button type="button" class="prompt-question" data-question="What happened during the drafting of the Constitution?"><span data-kcopy="qConstitution">What happened during the drafting of the Constitution?</span><span>↗</span></button>
+            <button type="button" class="prompt-question" data-question="Which books discuss social justice?"><span data-kcopy="qBooks">Which books discuss social justice?</span><span>↗</span></button>
+          </div>
+        </div>
+        <article id="kiosk-answer" class="kiosk-answer" hidden>
+          <div class="answer-head"><div><p class="mini-label">YOUR QUESTION</p><p id="kiosk-question" class="answer-question"></p></div><span id="kiosk-answer-state">ARCHIVE ANSWER</span></div>
+          <div class="answer-copy-wrap"><p id="kiosk-answer-copy" class="answer-copy"></p></div>
+          <div class="answer-controls"><button type="button" id="answer-audio-toggle" class="answer-audio-toggle" disabled>▶ LISTEN</button><span id="answer-audio-time"></span></div>
+          <div id="kiosk-related-wrap" class="kiosk-related-wrap" hidden><p class="mini-label">THIS ANSWER CONNECTS TO</p><div id="kiosk-related" class="kiosk-related"></div></div>
+        </article>
+      </section>
+
+      <section id="exhibits" class="kiosk-section collection-section" hidden>
+        <div class="section-heading section-heading-row"><div><p class="section-kicker" data-kcopy="exhibitsKicker">02 / EXPLORE</p><h2 data-kcopy="exhibitsTitle">Explore the Memorial</h2><p data-kcopy="exhibitsIntro">Stories of courage, scholarship and a nation in the making.</p></div><span class="section-index" data-kcopy="collection">THE COLLECTION</span></div>
+        <div id="exhibit-grid" class="exhibit-grid"></div>
+        <article id="exhibit-detail" class="exhibit-detail" hidden><img id="exhibit-detail-image" alt=""/><div><p class="mini-label">EXHIBIT NOTE</p><h3 id="exhibit-detail-title"></h3><p id="exhibit-detail-description"></p><button type="button" id="exhibit-ask" class="text-action">ASK ABOUT THIS <span>↓</span></button><button type="button" id="exhibit-close" class="detail-close">CLOSE</button></div></article>
+      </section>
+
+      <section id="books" class="kiosk-section books-section" hidden>
+        <div class="section-heading section-heading-row"><div><p class="section-kicker" data-kcopy="booksKicker">03 / READ</p><h2 data-kcopy="booksTitle">Books &amp; Writings</h2><p data-kcopy="booksIntro">Explore selected writings and publications related to Dr. B. R. Ambedkar.</p></div><span class="section-index" data-kcopy="library">THE LIBRARY</span></div>
+        <div id="book-grid" class="book-grid"></div>
+      </section>
+
+      <section id="speeches" class="kiosk-section speeches-section" hidden>
+        <div class="section-heading section-heading-row"><div><p class="section-kicker" data-kcopy="speechKicker">04 / LISTEN</p><h2 data-kcopy="speechTitle">Speeches &amp; Interviews</h2><p data-kcopy="speechIntro">Archival recordings will appear here when verified media is added.</p></div><span class="section-index" data-kcopy="oralHistory">ORAL HISTORY</span></div>
+        <div id="speech-grid" class="speech-grid"></div>
+      </section>
+
+      <section id="interviews" class="kiosk-section speeches-section" hidden>
+        <div class="section-heading section-heading-row"><div><p class="section-kicker" data-kcopy="interviewsKicker">05 / REMEMBER</p><h2 data-kcopy="interviewsTitle">Interviews</h2><p data-kcopy="interviewsIntro">Verified interviews and oral histories will be added as source media becomes available.</p></div><span class="section-index">ORAL HISTORY</span></div>
+        <div id="interview-grid" class="speech-grid"></div>
+      </section>
+
+      <section id="media" class="kiosk-section media-section" hidden>
+        <div class="section-heading section-heading-row"><div><p class="section-kicker" data-kcopy="mediaKicker">05 / SEE</p><h2 data-kcopy="mediaTitle">Historical Media</h2><p data-kcopy="mediaIntro">Photographs and visual records from the memorial's local collection.</p></div><span class="section-index" data-kcopy="records">ARCHIVAL RECORDS</span></div>
+        <div id="media-grid" class="media-grid"></div>
+      </section>
+
+      <section id="connections" class="kiosk-section connections-section" hidden>
+        <div class="section-heading"><p class="section-kicker" data-kcopy="discoverKicker">06 / DISCOVER</p><h2 data-kcopy="discoverTitle">Discover Connections</h2><p data-kcopy="discoverIntro">Explore related topics across people, places, events and ideas.</p></div>
+        <div id="connection-groups" class="connection-groups"></div>
+      </section>
+
+      <section id="route-page" class="kiosk-section route-page" hidden aria-live="polite"><div id="route-content"></div></section>
+    </main>
+
+    <footer class="kiosk-footer"><div><span class="footer-seal"><img src="/static/assets/brlogo.png" alt="" /></span><p>Dr. B. R. Ambedkar National Memorial<br /><small data-kcopy="guide">VOICE TOUR GUIDE</small></p></div><button type="button" id="start-over" class="start-over"><span data-kcopy="startOver">START OVER</span><span>↑</span></button></footer>
+    <button type="button" id="floating-ask" class="floating-ask" aria-label="Ask the Guide"><span>◎</span><small>ASK</small></button>
+
+    <div id="kiosk-media-viewer" class="kiosk-modal" hidden role="dialog" aria-modal="true" aria-labelledby="media-viewer-title">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">×</button><div class="media-viewer-content"><div id="media-viewer-stage" class="media-viewer-stage"></div><div class="media-viewer-caption"><p class="mini-label">ARCHIVAL MEDIA</p><h2 id="media-viewer-title"></h2><p id="media-viewer-description"></p></div></div>
+    </div>
+    <div id="speech-viewer" class="kiosk-modal" hidden role="dialog" aria-modal="true" aria-labelledby="speech-viewer-title">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">×</button><div class="speech-viewer-content"><div id="speech-viewer-stage" class="speech-viewer-stage"></div><div class="speech-viewer-caption"><p class="mini-label">SPEECHES &amp; INTERVIEWS</p><h2 id="speech-viewer-title"></h2><p id="speech-viewer-meta"></p><p id="speech-viewer-description"></p><div id="speech-transcript" hidden><p class="mini-label">TRANSCRIPT</p><p></p></div></div></div>
+    </div>
+    <div id="kiosk-attract" class="kiosk-attract" hidden><img src="/static/exhibits/young_ambedkar.jpg" alt=""/><div><p class="section-kicker">DR. B. R. AMBEDKAR NATIONAL MEMORIAL</p><h2>Explore.<br/>Listen.<br/>Discover.</h2><p>TOUCH ANYWHERE TO BEGIN</p></div></div>
+  </div>
+
   <div id="app">
     <!-- Header -->
     <header id="header">
@@ -106,6 +219,11 @@
     <img id="image-viewer-image" class="image-viewer-image" alt="" />
   </div>
 
+  <script src="/static/data/books.js"></script>
+  <script src="/static/data/speeches.js"></script>
+  <script src="/static/data/interviews.js"></script>
+  <script src="/static/data/exhibits.js"></script>
+  <script src="/static/data/media.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
