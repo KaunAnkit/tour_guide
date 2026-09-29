@@ -41,6 +41,24 @@ uvicorn main:app --reload --port 8000
 
 Navigate to **http://localhost:8000** — the backend serves the frontend.
 
+## Deploy to Render
+
+This repository includes a `render.yaml` Blueprint for a single Render Web Service. The FastAPI backend serves the frontend, exhibit images, QR data, and API from the same URL.
+
+1. Push the repository to GitHub or GitLab.
+2. In Render, choose **New +** → **Blueprint** and select the repository.
+3. Render will read `render.yaml`. When prompted, enter your `GROQ_API_KEY` as a secret environment variable.
+4. Deploy and open the generated `https://...onrender.com` URL. Check `https://...onrender.com/health` first.
+
+The service uses the checked-in ChromaDB files in `backend/chroma_db`. Render's local filesystem is ephemeral, but generated audio is only a temporary cache and is recreated when needed. If you create or change the vector database, commit the updated `backend/chroma_db` files and redeploy.
+
+For a manual Web Service instead, use:
+
+- Build command: `pip install -r backend/requirements.txt`
+- Start command: `cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Health check path: `/health`
+- Environment variable: `GROQ_API_KEY` (secret)
+
 ### 3. Use it
 
 - **Tap the orb** to start recording
